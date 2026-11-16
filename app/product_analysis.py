@@ -12,11 +12,13 @@ def create_product_index(db):
         SELECT 'ACD' AS division,acd_rse AS region,acd_ase AS ase,
           acd_mpe AS territory,dr_code,dr_name,specialty,
           trim(coalesce(brand,'')) AS brand,trim(coalesce(generic,'')) AS generic,
+          trim(coalesce(company,'')) AS company,
           concat_ws('|',rx_date,source_type,rx_serial,acd_mpe,dr_code) AS rx_key
         FROM rx WHERE trim(coalesce(acd_mpe,''))<>'' AND trim(coalesce(dr_code,''))<>''
         UNION ALL
         SELECT 'CCD',ccd_rse,ccd_ase,ccd_mpe,dr_code,dr_name,specialty,
           trim(coalesce(brand,'')),trim(coalesce(generic,'')),
+          trim(coalesce(company,'')),
           concat_ws('|',rx_date,source_type,rx_serial,ccd_mpe,dr_code)
         FROM rx WHERE trim(coalesce(ccd_mpe,''))<>'' AND trim(coalesce(dr_code,''))<>''""")
 
@@ -102,3 +104,87 @@ def report_date_range(db):
         vals=db.execute("SELECT min(rx_date),max(rx_date) FROM rx WHERE rx_date IS NOT NULL AND rx_date<>''").fetchone()
         return " to ".join(str(x) for x in vals if x) or "Imported dataset"
     except Exception:return "Imported dataset"
+
+
+def manufacturer_bucket(value):
+    """Categorize the actual Company Name field. Empty is not a competitor."""
+    import re
+    normalized=re.sub(r"[^a-z0-9]","",str(value or "").lower())
+    if not normalized:
+        return "Unclassified"
+    if normalized.startswith("beximco"):
+        return "Beximco"
+    return "Competitor"
+
+
+def generic_rx_shares(db,division,generic,region="",ase="",territory="",brand=""):
+    """Distinct-prescription presence shares within a single generic.
+
+    Manufacturer affiliation must come from the imported Company Name, not
+    an inferred brand list. Brand-specific shares use the same denominator.
+    Shares may overlap if a single Rx lists multiple manufacturers/brands.
+    No generic: return None rather than presenting misleading cross-generic share.
+    """
+    if not generic:
+        return None
+    if not has_product_index(db):
+        raise ValueError("Re-import the Rx workbook to enable manufacturer shares.")
+    fields={r[1] for r in db.execute("PRAGMA table_info('rx_items')").fetchall()}
+    if "company" not in fields:
+        raise ValueError("Re-import the Rx workbook to add Company Name mapping.")
+    parts=["division=?","generic=?"]
+    args=[division,generic]
+    for name,value in (("region",region),("ase",ase),("territory",territory)):
+        if value:parts.append(name+"=?");args.append(value)
+    predicate=" AND ".join(parts)
+    # A company is never guessed from its brand name. A generic prescription
+    # with both competitor and Beximco brand rows counts once in each bucket.
+    # Brand share is counted by a distinct Rx membership flag.
+    sql="""WITH src AS (
+      SELECT rx_key,brand,
+        CASE WHEN trim(coalesce(company,''))='' THEN 'Unclassified'
+             WHEN regexp_replace(lower(company),'[^a-z0-9]','','g') LIKE 'beximco%'
+               THEN 'Beximco'
+             ELSE 'Competitor' END AS owner
+      FROM rx_items WHERE """+predicate+"""
+    ), per_rx AS (
+      SELECT rx_key,
+        max(CASE WHEN owner='Beximco' THEN 1 ELSE 0 END) AS bpl,
+        max(CASE WHEN owner='Competitor' THEN 1 ELSE 0 END) AS competitor,
+        max(CASE WHEN owner='Unclassified' THEN 1 ELSE 0 END) AS unclassified,
+        max(CASE WHEN brand=? THEN 1 ELSE 0 END) AS selected_brand
+      FROM src GROUP BY rx_key
+    )
+    SELECT count(*) AS total_rx,coalesce(sum(bpl),0),coalesce(sum(competitor),0),
+      coalesce(sum(unclassified),0),coalesce(sum(CASE WHEN bpl=1 AND competitor=1 THEN 1 ELSE 0 END),0),
+      coalesce(sum(selected_brand),0)
+    FROM per_rx"""
+    total,bex,competitor,unknown,overlap,selected=db.execute(sql,args+[brand or "\0"]).fetchone()
+    total=int(total)
+    def share(count):
+        return round(100*int(count)/total,1) if total else None
+    result={"division":division,"generic":generic,"brand":brand,
+        "total_rx":total,"beximco_rx":int(bex),"competitor_rx":int(competitor),
+        "unclassified_rx":int(unknown),"overlap_rx":int(overlap),
+        "brand_rx":int(selected),"beximco_share":share(bex),
+        "competitor_share":share(competitor),"unclassified_share":share(unknown),
+        "brand_share":share(selected)}
+    return result
+
+
+def competitor_brand_shares(db,division,generic,region="",ase="",territory="",limit=20):
+    """Top competing brands using generic denominator; manufacturer-classified."""
+    base=generic_rx_shares(db,division,generic,region,ase,territory)
+    if not base or not base["total_rx"]:return []
+    where=["division=?","generic=?"]
+    args=[division,generic]
+    for column,value in (("region",region),("ase",ase),("territory",territory)):
+        if value:where.append(column+"=?");args.append(value)
+    sql="""SELECT brand,count(DISTINCT rx_key) AS n
+        FROM rx_items WHERE """+" AND ".join(where)+"""
+        AND trim(coalesce(brand,''))<>''
+        AND trim(coalesce(company,''))<>''
+        AND regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
+        GROUP BY brand ORDER BY n DESC,brand LIMIT ?"""
+    rows=db.execute(sql,args+[max(1,min(100,int(limit)))]).fetchall()
+    return [(brand,int(n),round(100*n/base["total_rx"],1)) for brand,n in rows]
