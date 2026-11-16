@@ -3,7 +3,7 @@ import sys,threading,traceback
 from pathlib import Path
 from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView)
-from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,DB,DATA
+from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 
 CSS="""
 QWidget{background:#071b17;color:#d9f7e7;font:12px 'Segoe UI'}
@@ -28,7 +28,8 @@ class Signals(QObject):
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.db=connect()
+        self.memory_gb=4
+        self.db=connect(self.memory_gb)
         self.rows=[]
         self.setWindowTitle("Prescriber Intelligence | Emerald Edition")
         self.resize(1450,860)
@@ -74,6 +75,15 @@ class Window(QMainWindow):
         data=QWidget();self.tabs.addTab(data,"▤  DATA / IMPORT")
         d=QVBoxLayout(data)
         d.addWidget(QLabel("Select your Rx workbook locally. Files stay on this computer; no server upload."))
+        settings=QHBoxLayout()
+        sheetbox=QVBoxLayout();sheetbox.addWidget(QLabel("EXCEL WORKSHEET"))
+        self.sheet=QComboBox();self.sheet.setEditable(True)
+        self.sheet.addItem("Sheet1")
+        sheetbox.addWidget(self.sheet);settings.addLayout(sheetbox)
+        memorybox=QVBoxLayout();memorybox.addWidget(QLabel("DUCKDB MEMORY"))
+        self.memory=QSpinBox();self.memory.setRange(1,16);self.memory.setValue(4)
+        self.memory.setSuffix(" GB");memorybox.addWidget(self.memory);settings.addLayout(memorybox)
+        d.addLayout(settings)
         pick=QPushButton("SELECT XLSX AND IMPORT INTO DUCKDB");pick.clicked.connect(self.pick_rx);d.addWidget(pick)
         self.progress=QProgressBar();d.addWidget(self.progress)
         self.log=QTextEdit();self.log.setReadOnly(True);self.log.setPlainText("Database: "+str(DB));d.addWidget(self.log)
@@ -142,7 +152,22 @@ class Window(QMainWindow):
     def pick_rx(self):
         path,_=QFileDialog.getOpenFileName(self,"Select prescription workbook",str(DATA),"Excel (*.xlsx)")
         if not path:return
-        if QMessageBox.question(self,"Confirm import","Import and replace previously ranked data?")!=QMessageBox.Yes:return
+        try:
+            names=available_sheets(path)
+        except Exception as e:
+            return self.error("Could not open Excel workbook: "+str(e))
+        requested=self.sheet.currentText().strip()
+        self.sheet.clear();self.sheet.addItems(names)
+        if requested in names:self.sheet.setCurrentText(requested)
+        selected=self.sheet.currentText()
+        if selected not in names:return self.error("Choose an existing worksheet.")
+        self.log.append("Available sheets: "+", ".join(names))
+        answer=QMessageBox.question(self,"Confirm import",
+            f"Import worksheet {selected!r} using {self.memory.value()} GB DuckDB memory?\\n"
+            "Excel headers and imported row counts will be validated.\\n"
+            "Previous Rx rankings will be preserved if the import fails.")
+        if answer!=QMessageBox.Yes:return
+        memory=self.memory.value()
         self.progress.setRange(0,0)
         self.signals=Signals()
         self.signals.done.connect(self.imported)
@@ -150,15 +175,15 @@ class Window(QMainWindow):
         self.signals.progress.connect(lambda n:self.log.append(f"Read {n:,} rows"))
         def run():
             try:
-                db=connect()
-                n=import_rx(db,path,lambda count:self.signals.progress.emit(count))
+                db=connect(memory)
+                n=import_rx(db,path,lambda count:self.signals.progress.emit(count),sheet_name=selected,memory_gb=memory)
                 db.close();self.signals.done.emit(n)
             except Exception:self.signals.error.emit(traceback.format_exc())
         threading.Thread(target=run,daemon=True).start()
     def imported(self,n):
         self.progress.setRange(0,100);self.progress.setValue(100)
         self.log.append(f"Imported {n:,} rows.")
-        self.db.close();self.db=connect();self.reset_filters()
+        self.db.close();self.db=connect(self.memory.value());self.reset_filters()
     def failed(self,msg):
         self.progress.setRange(0,100);self.progress.setValue(0);self.log.append(msg);self.error(msg)
 
