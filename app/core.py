@@ -4,6 +4,8 @@ from pathlib import Path
 from email.message import EmailMessage
 import duckdb
 from openpyxl import load_workbook
+from product_analysis import create_product_index, filtered_rankings
+from html_report import build_region_report
 
 ROOT=Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"
@@ -126,6 +128,7 @@ def import_rx(db,path,progress=None,sheet_name="Sheet1",memory_gb=4):
         SELECT division,region,ase,territory,dr_code,max(dr_name) dr_name,max(specialty) specialty,max(address) address,
         count(DISTINCT rx_key) prescriptions,count(*) product_rows
         FROM expanded WHERE trim(coalesce(dr_code,''))<>'' GROUP BY 1,2,3,4,5""")
+        create_product_index(db)
         db.execute("COMMIT")
         started=False
         return count
@@ -167,44 +170,51 @@ def write_csv(rows,path):
     with open(path,"w",newline="",encoding="utf-8-sig") as f:
         w=csv.writer(f);w.writerow(HEADERS);w.writerows(rows)
 
-def generate_drafts(db,outdir,top_n=10):
-    """Generate local, unsent EMLs; never attach data to a blocked routing record."""
+def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD"):
+    """Create unsent email drafts with HTML body, no CSV attachment.
+
+    Blocking rules never put recipients or prescriber data in invalid drafts.
+    Recipient routing is currently validated for ACD only.
+    """
+    if division!="ACD":
+        raise ValueError("CCD routing has not yet been validated; only ACD drafts are supported.")
     outdir=Path(outdir);outdir.mkdir(parents=True,exist_ok=True)
     manifest=[]
     for region,zone,name,email,ases,zname,zemail,status in db.execute(
         "SELECT region,zone,rse_name,rse_email,ase_emails,zsi_name,zsi_email,audit_status "
         "FROM recipients WHERE division='ACD' ORDER BY region").fetchall():
-        rows=ranking(db,"ACD",top_n,region=region)
         def good(value):
             return bool(value and re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",value))
-        # Audit import may store free-form status; only validated hierarchy's
-        # explicit Ready status authorizes live-addressed draft output.
-        permitted=(status=="Ready" and good(email) and good(zemail) and bool(rows))
-        cc_candidates=[s.strip() for s in (ases or "").replace(",", ";").split(";") if s.strip()]
+        cc_candidates=[e.strip() for e in (ases or "").replace(",", ";").split(";") if e.strip()]
         cc_candidates.append(zemail or "")
         invalid_cc=[e for e in cc_candidates if e and not good(e)]
-        if invalid_cc:permitted=False
-        unique_cc=list(dict.fromkeys(e for e in cc_candidates if good(e) and e.lower()!=(email or "").lower()))
+        unique_cc=list(dict.fromkeys(
+            e for e in cc_candidates if good(e) and e.lower()!=(email or "").lower()))
+        permitted=(status=="Ready" and good(email) and good(zemail) and not invalid_cc)
+        report=None
+        if permitted:
+            report=build_region_report(db,"ACD",region,top_n,brand,generic,name)
+            if report["rx"]==0:permitted=False
         msg=EmailMessage()
+        msg["Subject"]=f"[DRAFT] ACD {region} — {brand or generic or 'Rx'} prescription review"
         if permitted:
             msg["To"]=email
             if unique_cc:msg["Cc"]=", ".join(unique_cc)
+            msg.set_content(report["text"])
+            msg.add_alternative(report["html"],subtype="html")
         else:
-            msg["X-Recipient-Review"]="BLOCKED: recipient hierarchy, missing report or email needs review"
-        msg["Subject"]=f"[DRAFT] ACD {region} — Top {top_n} prescribers by territory"
-        msg.set_content(
-            "Dear "+(name or "Regional Sales Executive")+",\n\n"
-            "Attached is the territory-level prescriber report for your region.\n\n"
-            "Verify recipients, reporting period and ranking definitions before sending.\n"
-            "This draft was not sent.\n")
-        if permitted:
-            stream=io.StringIO();w=csv.writer(stream);w.writerow(HEADERS);w.writerows(rows)
-            msg.add_attachment(stream.getvalue().encode("utf-8-sig"),maintype="text",
-                               subtype="csv",filename=f"ACD_{region}_Top_{top_n}.csv")
-        filename=f"ACD_{region}_Top_{top_n}.eml"
+            msg["X-Recipient-Review"]="BLOCKED: recipient hierarchy or no matching Rx data"
+            msg.set_content("BLOCKED DRAFT — Do not send.\n"
+                            +"Region: "+str(region)+"\n"
+                            +"Reason: "+str(status or "Missing routing")+"\n"
+                            +"Matching prescription data may also be unavailable.\n")
+        filename=f"ACD_{region}_Top_{max(1,min(20,int(top_n)))}.eml"
         (outdir/filename).write_bytes(msg.as_bytes())
-        manifest.append([region,"REVIEW" if permitted else "BLOCKED",len(rows),filename,
-                         "" if permitted else (status or "Missing routing status")])
+        manifest.append([region,"REVIEW" if permitted else "BLOCKED",
+                         report["rx"] if report else 0,filename,
+                         "" if permitted else (status or "No matching Rx / invalid CC")])
     with open(outdir/"draft_manifest.csv","w",encoding="utf-8-sig",newline="") as f:
-        w=csv.writer(f);w.writerow(["Region","Status","Ranking rows","File","Routing issue"]);w.writerows(manifest)
+        w=csv.writer(f)
+        w.writerow(["Region","Status","Scoped Rx count","File","Routing issue"])
+        w.writerows(manifest)
     return manifest
