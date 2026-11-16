@@ -3,6 +3,10 @@ from collections import defaultdict,Counter
 from html import escape
 from email.message import EmailMessage
 import re
+try:
+    from .product_analysis import generic_rx_shares, competitor_brand_shares
+except ImportError:
+    from product_analysis import generic_rx_shares, competitor_brand_shares
 
 def safe(value):
     return escape(str(value if value is not None else ""),quote=True)
@@ -139,6 +143,8 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
                 d["name"]+" ("+d["code"]+")",d["specialty"],d["total"],
                 d["detail"],d["target"] if brand else "—",d["app"]])
 
+    shares=generic_rx_shares(db,division,generic,region=region,brand=brand) if generic else None
+    competition=competitor_brand_shares(db,division,generic,region=region,limit=12) if shares else []
     comparator=brand or "All observed brands"
     survey=generic or "All generics"
     scope=survey+" / "+comparator
@@ -149,6 +155,24 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
        ("#13814d" if accent else "#263342")+';">'+safe(value)+
        '</div><div style="font:12px Arial;color:#485464;">'+safe(label)+'</div></td></tr></table></td>')
     kpi='<table role="presentation" width="100%"><tr>'+badge(num(total),"Observed Rx")+badge(num(prescribers),"Prescribers")+badge(num(territories),"MPE territories")+badge(pct(target_rx,total) if brand else "—","Target brand share",bool(brand))+'</tr></table>'
+    manufacturer_section=""
+    if shares:
+        manufacturer_section=(
+            section("Beximco vs competitor Rx share within "+generic)
+            +'<table role="presentation" width="100%"><tr>'
+            +badge(pct(shares["beximco_rx"],shares["total_rx"]),"Beximco Rx share",True)
+            +badge(pct(shares["competitor_rx"],shares["total_rx"]),"Competitor Rx share")
+            +badge(pct(shares["unclassified_rx"],shares["total_rx"]),"Unclassified company")
+            +badge(num(shares["overlap_rx"]),"Shared Rx / overlap")+'</tr></table>'
+            +'<p style="color:#657381;font:12px Arial;line-height:1.5;">'
+             'All shares use the same distinct generic-prescription denominator. '
+             'A prescription featuring both manufacturers is included in both shares. '
+             'Beximco identification comes from Company Name; empty company values remain unclassified.'
+             '</p>'
+            +table_style("Leading competitor brands",
+                ["Competitor brand","Distinct Rx","Share of generic Rx"],
+                [[b,num(n),f"{share:.1f}%"] for b,n,share in competition])
+        )
     introductory=("In the imported survey, this region recorded "
           +f"{num(total)} distinct prescriptions from {num(prescribers)} prescribers across {num(territories)} territories"
           +(f". {brand} appeared in {num(target_rx)} of those prescriptions ({pct(target_rx,total)})." if brand else ".")
@@ -179,12 +203,12 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
 {kpi}
 {section("Action points")}
 <ol style="font:14px/1.6 Arial;color:#263342;">{"".join('<li style="margin-bottom:7px;">'+safe(x)+'</li>' for x in actions)}</ol>
-{top}{mix}{zero}{territories_section}{per_territory}
+{manufacturer_section}{top}{mix}{zero}{territories_section}{per_territory}
 <p style="font:12px/1.5 Arial;color:#657381;margin-top:30px;">
 <b>Apparent Prescription Preference (APP)</b> = observed target-brand distinct Rx
 divided by all distinct Rx in the selected generic (when selected) for the same doctor or territory.
 It is descriptive, sample-dependent and should not be interpreted as the doctor's actual preference.
-Brand percentages may total above 100% if multiple brands occur on the same prescription.
+Brand/manufacturer percentages may total above 100% if multiple brands or manufacturers occur on the same prescription.
 Data source: locally imported prescription workbook. No national benchmark is inferred.</p>
 <p style="font:14px/1.6 Arial;">This is for your review and necessary follow-up.<br/>Regards,<br/>Prescriber Intelligence</p>
 </td></tr></table></body></html>"""
@@ -192,5 +216,5 @@ Data source: locally imported prescription workbook. No national benchmark is in
           f"Scope: {scope}\nObserved Rx: {total}\nPrescribers: {prescribers}\n"
           +(f"Target brand: {brand}, Rx: {target_rx}, share: {pct(target_rx,total)}\n" if brand else "")
           +"Open with an HTML-capable email client to see the full formatted report.")
-    return {"html":body,"text":text,"rx":total,"prescribers":prescribers,
+    return {"html":body,"text":text,"manufacturer_shares":shares,"rx":total,"prescribers":prescribers,
             "target_rx":target_rx,"scope":scope,"territories":territories}
