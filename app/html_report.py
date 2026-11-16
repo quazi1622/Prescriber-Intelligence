@@ -7,6 +7,12 @@ try:
     from .product_analysis import generic_rx_shares, competitor_brand_shares
 except ImportError:
     from product_analysis import generic_rx_shares, competitor_brand_shares
+try:
+    from .outlook_layout import render_report
+    from .product_analysis import report_date_range
+except ImportError:
+    from outlook_layout import render_report
+    from product_analysis import report_date_range
 
 def safe(value):
     return escape(str(value if value is not None else ""),quote=True)
@@ -192,26 +198,42 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
          6 if brand else None)
     zero=table_style(f"Prescribers without observed {brand} Rx",["ASE / MPE","Prescriber","Specialty","Selected-scope Rx","Brands observed"],non_rows) if brand else ""
     territories_section=table_style("Territory-by-territory review",["ASE / MPE","Rx","Prescribers",comparator+" Rx","APP","Leading observed prescribers"],territory_rows,3 if brand else None)
-    body=f"""<!DOCTYPE html><html><body style="background:#f0f2f4;margin:0;padding:16px;font-family:Arial,sans-serif;color:#263342;">
-<table role="presentation" cellspacing="0" cellpadding="0" width="100%" style="max-width:900px;margin:auto;background:#ffffff;border-collapse:collapse;">
-<tr><td style="padding:0 0 22px;"><div style="background:#104f69;padding:22px 25px;color:white;">
-<div style="font:12px Arial;letter-spacing:1px;color:#d8edf2;">PRESCRIBER INTELLIGENCE · {safe(division)} · {safe(scope)}</div>
-<div style="font:bold 25px Arial;margin-top:7px;">{safe(region)} — Prescription Review</div></div></td></tr>
-<tr><td style="padding:0 25px 30px;">
-<p>Dear {safe(recipient_name or 'Regional Sales Executive')},</p>
-<p>I hope this email finds you well.</p><p style="line-height:1.55;">{safe(introductory)}</p>
-{kpi}
-{section("Action points")}
-<ol style="font:14px/1.6 Arial;color:#263342;">{"".join('<li style="margin-bottom:7px;">'+safe(x)+'</li>' for x in actions)}</ol>
-{manufacturer_section}{top}{mix}{zero}{territories_section}{per_territory}
-<p style="font:12px/1.5 Arial;color:#657381;margin-top:30px;">
-<b>Apparent Prescription Preference (APP)</b> = observed target-brand distinct Rx
-divided by all distinct Rx in the selected generic (when selected) for the same doctor or territory.
-It is descriptive, sample-dependent and should not be interpreted as the doctor's actual preference.
-Brand/manufacturer percentages may total above 100% if multiple brands or manufacturers occur on the same prescription.
-Data source: locally imported prescription workbook. No national benchmark is inferred.</p>
-<p style="font:14px/1.6 Arial;">This is for your review and necessary follow-up.<br/>Regards,<br/>Prescriber Intelligence</p>
-</td></tr></table></body></html>"""
+    # Reference-inspired, fixed-width Outlook-safe email layout.
+    # Render all dynamic text escaped; no browser-only flex/grid CSS.
+    compact_top=[[r[0],str(r[1])+" / "+str(r[2]),r[3],
+                  str(r[4])+" Rx; "+str(r[5])] for r in main_rows]
+    compact_opportunities=[[r[0],r[1],r[4],r[3]] for r in non_rows[:20]]
+    compact_territories=[[r[0],r[1],
+          (str(r[3])+" / "+str(r[4]) if brand else "N/A"),
+          r[5]] for r in territory_rows]
+    if shares:
+        kpi_items=[
+            (num(total),"Generic Rx"),
+            (num(prescribers),"Prescribers"),
+            (pct(shares["beximco_rx"],shares["total_rx"]),"Beximco Rx share"),
+            (pct(shares["competitor_rx"],shares["total_rx"]),"Competitor Rx share"),
+        ]
+        summary_note=(
+            "Company classification uses the imported manufacturer field. "
+            +str(shares["unclassified_rx"])+" Rx have unclassified manufacturer records; "
+            +str(shares["overlap_rx"])+" Rx contain both Beximco and competitor brands.")
+    else:
+        kpi_items=[(num(total),"Observed Rx"),(num(prescribers),"Prescribers"),
+                   ("N/A","Beximco Rx share"),("N/A","Competitor Rx share")]
+        summary_note="Select a single generic to calculate comparable manufacturer shares."
+    method_note=(
+        "All results reflect the imported Rx sample. Apparent Prescription Preference is a "
+        "descriptive selected-brand/selected-generic Rx percentage, not proven doctor preference. "
+        "Brand and manufacturer presence may overlap on the same Rx; the shares need not add to 100%. "
+        "Prescription identifier and company classification should be validated before distribution.")
+    body=render_report(
+        division=division,period=report_date_range(db),region=region,
+        generic=generic or "All generics",scope=scope,
+        recipient=recipient_name or "Regional Sales Executive",
+        intro=introductory,kpi_items=kpi_items,summary_note=summary_note,
+        action_lines=actions,top_rows=compact_top,
+        brand_rows=brand_share,opportunity_rows=compact_opportunities,
+        territory_rows=compact_territories,method_note=method_note)
     text=(f"Prescription review for {division} {region}\n"
           f"Scope: {scope}\nObserved Rx: {total}\nPrescribers: {prescribers}\n"
           +(f"Target brand: {brand}, Rx: {target_rx}, share: {pct(target_rx,total)}\n" if brand else "")
