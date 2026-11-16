@@ -33,7 +33,8 @@ class HierarchyTests(unittest.TestCase):
                       None if i==10 else f"parent{i}@example.com",
                       "Vacant" if i==10 else "Active"])
         for i in range(1,52):
-            zone=10 if i in (8,9,10) else 1+(i%15)
+            zone=10 if i in (8,9,10) else 1+(i%16)
+            if zone==10 and i not in (8,9,10):zone=11
             if i==51:zone=13
             rse=None if i==51 else f"rse{i}@example.com"
             cc=None if zone==10 else f"parent{zone}@example.com"
@@ -63,7 +64,7 @@ class HierarchyTests(unittest.TestCase):
         message=BytesParser(policy=policy.default).parsebytes((self.path/"drafts"/"ACD_R08_Top_2.eml").read_bytes())
         self.assertIsNone(message.get("To"))
         self.assertIsNone(message.get("Cc"))
-        self.assertFalse(message.iter_attachments().__next__() if False else list(message.iter_attachments()))
+        self.assertEqual(list(message.iter_attachments()),[])
 
 if __name__=="__main__":
     unittest.main()
