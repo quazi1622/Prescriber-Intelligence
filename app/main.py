@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 from routing import import_hierarchy
-from product_analysis import product_choices,filtered_rankings,has_product_index
+from product_analysis import product_choices,filtered_rankings,has_product_index,generic_rx_shares,competitor_brand_shares
 
 CSS="""
 QWidget{background:#071b17;color:#d9f7e7;font:12px 'Segoe UI'}
@@ -64,6 +64,22 @@ class Window(QMainWindow):
         for _ in range(3):
             label=QLabel("—");label.setObjectName("metric");stats.addWidget(label);self.metrics.append(label)
         a.addLayout(stats)
+        share_stats=QHBoxLayout()
+        self.share_metrics=[]
+        for _ in range(4):
+            label=QLabel("Select a Generic to compare shares")
+            label.setObjectName("metric")
+            share_stats.addWidget(label)
+            self.share_metrics.append(label)
+        a.addLayout(share_stats)
+        self.competitors=QTableWidget()
+        self.competitors.setColumnCount(3)
+        self.competitors.setHorizontalHeaderLabels(
+            ["Competitor brand","Observed Rx","Generic Rx share"])
+        self.competitors.setMaximumHeight(190)
+        self.competitors.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        a.addWidget(QLabel("COMPETITOR BRAND SHARE — SELECTED GENERIC"))
+        a.addWidget(self.competitors)
         actions=QHBoxLayout()
         refresh=QPushButton("↻  REFRESH");refresh.clicked.connect(self.refresh);actions.addWidget(refresh)
         export=QPushButton("↓  EXPORT CSV");export.clicked.connect(self.export);actions.addWidget(export)
@@ -155,6 +171,33 @@ class Window(QMainWindow):
             self.metrics[0].setText(f"{len(self.rows):,}   RANKED PRESCRIBERS")
             self.metrics[1].setText(f"{len({(r[0],r[1],r[2]) for r in self.rows}):,}   TERRITORIES")
             self.metrics[2].setText(f"{sum(int(r[7]) for r in self.rows):,}   PRESCRIPTIONS")
+            generic=self.selected(self.generic)
+            if generic and has_product_index(self.db):
+                share=generic_rx_shares(self.db,self.division.currentText(),generic,
+                    region=self.selected(self.region),ase=self.selected(self.ase),
+                    territory=self.selected(self.territory),brand=self.selected(self.brand))
+                def format_share(value):
+                    return "—" if value is None else f"{value:.1f}%"
+                self.share_metrics[0].setText(
+                    format_share(share["beximco_share"])+"   BEXIMCO BRAND Rx SHARE")
+                self.share_metrics[1].setText(
+                    format_share(share["competitor_share"])+"   COMPETITOR Rx SHARE")
+                self.share_metrics[2].setText(
+                    format_share(share["unclassified_share"])+"   UNCLASSIFIED COMPANY")
+                self.share_metrics[3].setText(
+                    f'{share["overlap_rx"]:,}'+"   OVERLAPPING Rx")
+                competitor_rows=competitor_brand_shares(self.db,self.division.currentText(),
+                    generic,region=self.selected(self.region),ase=self.selected(self.ase),
+                    territory=self.selected(self.territory))
+                self.competitors.setRowCount(len(competitor_rows))
+                for i,row in enumerate(competitor_rows):
+                    for j,v in enumerate(row):
+                        formatted=f"{v:.1f}%" if j==2 else str(v)
+                        self.competitors.setItem(i,j,QTableWidgetItem(formatted))
+            else:
+                for label in self.share_metrics:
+                    label.setText("Select a Generic to compare Rx shares")
+                self.competitors.setRowCount(0)
         except Exception as e:self.error(str(e))
     def error(self,message):
         QMessageBox.critical(self,"Prescriber Intelligence",message)
