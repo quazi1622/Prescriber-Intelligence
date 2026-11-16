@@ -15,13 +15,13 @@ class ProductReportTests(unittest.TestCase):
         self.db.execute("""CREATE TABLE rx_items(
             division VARCHAR, region VARCHAR,ase VARCHAR,territory VARCHAR,
             dr_code VARCHAR,dr_name VARCHAR,specialty VARCHAR,brand VARCHAR,
-            generic VARCHAR,rx_key VARCHAR)""")
-        self.db.executemany("INSERT INTO rx_items VALUES (?,?,?,?,?,?,?,?,?,?)",[
-            ("ACD","T1","T10","T11","D1","Dr Alpha","GP","Azithrocin","Azithromycin","1"),
-            ("ACD","T1","T10","T11","D1","Dr Alpha","GP","Az","Azithromycin","2"),
-            ("ACD","T1","T10","T11","D1","Dr Alpha","GP","Az","Azithromycin","3"),
-            ("ACD","T1","T10","T11","D2","Dr Beta","Pediatrics","Az","Azithromycin","4"),
-            ("ACD","T1","T10","T11","D2","Dr Beta","Pediatrics","Az","Azithromycin","5")
+            generic VARCHAR,rx_key VARCHAR,company VARCHAR)""")
+        self.db.executemany("INSERT INTO rx_items VALUES (?,?,?,?,?,?,?,?,?,?,?)",[
+            ("ACD","T1","T10","T11","D1","Dr Alpha","GP","Azithrocin","Azithromycin","1","Beximco Pharmaceuticals PLC"),
+            ("ACD","T1","T10","T11","D1","Dr Alpha","GP","Az","Azithromycin","2","Aristopharma"),
+            ("ACD","T1","T10","T11","D1","Dr Alpha","GP","Az","Azithromycin","3","Aristopharma"),
+            ("ACD","T1","T10","T11","D2","Dr Beta","Pediatrics","Az","Azithromycin","4","Aristopharma"),
+            ("ACD","T1","T10","T11","D2","Dr Beta","Pediatrics","Az","Azithromycin","5","Aristopharma")
         ])
         self.db.execute("""CREATE TABLE prescribers AS
             SELECT division,region,ase,territory,dr_code,max(dr_name) dr_name,
@@ -56,6 +56,30 @@ class ProductReportTests(unittest.TestCase):
         self.assertEqual(len(generic_only),2)
         self.assertIsNone(generic_only[0][10])
 
+    def test_beximco_and_competitor_generic_rx_shares(self):
+        shares=product_analysis.generic_rx_shares(
+            self.db,"ACD","Azithromycin",region="T1",brand="Azithrocin")
+        self.assertEqual(shares["total_rx"],5)
+        self.assertEqual(shares["beximco_share"],20.0)
+        self.assertEqual(shares["competitor_share"],80.0)
+        self.assertEqual(shares["brand_share"],20.0)
+        self.assertEqual(shares["overlap_rx"],0)
+        self.assertEqual(shares["unclassified_rx"],0)
+        self.assertEqual(product_analysis.competitor_brand_shares(
+            self.db,"ACD","Azithromycin","T1"),[("Az",4,80.0)])
+        self.db.execute("""INSERT INTO rx_items VALUES
+            ('ACD','T1','T10','T11','D1','Dr Alpha','GP','Az','Azithromycin','1','Aristopharma')""")
+        overlap=product_analysis.generic_rx_shares(
+            self.db,"ACD","Azithromycin",region="T1")
+        self.assertEqual(overlap["overlap_rx"],1)
+        self.assertEqual(overlap["beximco_share"],20.0)
+        self.assertEqual(overlap["competitor_share"],100.0)
+        self.db.execute("""INSERT INTO rx_items VALUES
+            ('ACD','T1','T10','T11','D1','Dr Alpha','GP','Mystery','Azithromycin','1',NULL)""")
+        unknown=product_analysis.generic_rx_shares(
+            self.db,"ACD","Azithromycin",region="T1")
+        self.assertEqual(unknown["unclassified_rx"],1)
+
     def test_formatted_html_email_without_csv_attachment(self):
         report=html_report.build_region_report(
             self.db,"ACD","T1",top_n=5,brand="Azithrocin",
@@ -63,6 +87,8 @@ class ProductReportTests(unittest.TestCase):
         self.assertEqual(report["rx"],5)
         self.assertEqual(report["target_rx"],1)
         self.assertIn("20.0%",report["html"])
+        self.assertIn("80.0%",report["html"])
+        self.assertIn("Beximco vs competitor Rx share",report["html"])
         self.assertIn("Apparent Prescription Preference",report["html"])
         self.assertIn("Top 5 prescribers in every territory",report["html"])
         self.assertIn("Prescribers without observed Azithrocin Rx",report["html"])
