@@ -72,6 +72,24 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
         item=doctors.setdefault(key,{"name":name or "Unnamed prescriber",
             "specialty":specialty or "—","brand_rx":Counter()})
         item["brand_rx"][str(b or "Unspecified")]+=int(rxc)
+    counts=db.execute("""SELECT ase,territory,dr_code,
+          count(DISTINCT rx_key) AS total_rx
+          FROM rx_items WHERE """+clause+
+          " GROUP BY ase,territory,dr_code",args).fetchall()
+    doctor_totals={(str(a or ""),str(t or ""),str(c or "")):int(n)
+                   for a,t,c,n in counts}
+    territory_counts=db.execute(
+        "SELECT ase,territory,count(DISTINCT rx_key) FROM rx_items WHERE "
+        +clause+" GROUP BY ase,territory",args).fetchall()
+    territory_totals={(str(a or ""),str(t or "")):int(n)
+                      for a,t,n in territory_counts}
+    territory_target_totals={}
+    if brand:
+        counts=db.execute(
+            "SELECT ase,territory,count(DISTINCT rx_key) FROM rx_items WHERE "
+            +clause+" AND brand=? GROUP BY ase,territory",args+[brand]).fetchall()
+        territory_target_totals={(str(a or ""),str(t or "")):int(n)
+                                 for a,t,n in counts}
     # Actual target Rx count uses DISTINCT keys; never sum brand rows as total.
     if brand:
         count_sql="SELECT count(DISTINCT rx_key) FROM rx_items WHERE "+clause+" AND brand=?"
@@ -85,10 +103,7 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
     territory_data=defaultdict(list)
     for (ase,terr,code),d in doctors.items():
         # Total by doctor must not sum brand-specific counts due to overlap.
-        d_total=int(db.execute(
-            "SELECT count(DISTINCT rx_key) FROM rx_items WHERE "+clause+
-            " AND ase=? AND territory=? AND dr_code=?",
-            args+[ase,terr,code]).fetchone()[0])
+        d_total=doctor_totals[(ase,terr,code)]
         selected=d["brand_rx"].get(brand,0) if brand else 0
         d["total"]=d_total;d["target"]=selected
         d["app"]=pct(selected,d_total) if brand else "—"
@@ -108,12 +123,8 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
     territory_rows=[]
     for (ase,terr),items in sorted(territory_data.items()):
         items.sort(key=lambda d:(-d["total"],d["code"]))
-        t_rx=int(db.execute(
-            "SELECT count(DISTINCT rx_key) FROM rx_items WHERE "+clause+" AND ase=? AND territory=?",
-            args+[ase,terr]).fetchone()[0])
-        b_rx=int(db.execute(
-            "SELECT count(DISTINCT rx_key) FROM rx_items WHERE "+clause+
-            " AND ase=? AND territory=? AND brand=?",args+[ase,terr,brand]).fetchone()[0]) if brand else 0
+        t_rx=territory_totals[(ase,terr)]
+        b_rx=territory_target_totals.get((ase,terr),0) if brand else 0
         territory_rows.append([f"{ase} / {terr}",num(t_rx),num(len(items)),
                                num(b_rx) if brand else "—",
                                pct(b_rx,t_rx) if brand else "—",
