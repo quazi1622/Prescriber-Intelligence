@@ -169,8 +169,8 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
              'A prescription featuring both manufacturers is included in both shares. '
              'Beximco identification comes from Company Name; empty company values remain unclassified.'
              '</p>'
-            +table_style("Leading competitor brands",
-                ["Competitor brand","Distinct Rx","Share of generic Rx"],
+            +section("Leading competitor brands")
+            +table(["Competitor brand","Distinct Rx","Share of generic Rx"],
                 [[b,num(n),f"{share:.1f}%"] for b,n,share in competition])
         )
     introductory=("In the imported survey, this region recorded "
