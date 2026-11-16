@@ -131,6 +131,14 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
                                "; ".join(d["name"] for d in items[:3])])
     non_rows=[[f'{d["ase"]} / {d["terr"]}',d["name"],d["specialty"],
                d["total"],d["detail"]] for d in nonprescribers[:80]]
+    territory_top_rows=[]
+    for (ase,terr),items in sorted(territory_data.items()):
+        items=sorted(items,key=lambda d:(-d["total"],d["code"]))
+        for i,d in enumerate(items[:top_n],start=1):
+            territory_top_rows.append([f"{ase} / {terr}",i,
+                d["name"]+" ("+d["code"]+")",d["specialty"],d["total"],
+                d["detail"],d["target"] if brand else "—",d["app"]])
+
     comparator=brand or "All observed brands"
     survey=generic or "All generics"
     scope=survey+" / "+comparator
@@ -154,6 +162,10 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
     table_style=lambda title,headers,rows,highlight=None: section(title)+(table(headers,rows,highlight) if rows else '<p style="color:#607080;">No matching records.</p>')
     top=table_style(f"Top {top_n} observed prescribers",["Rank","Prescriber / Code","Specialty","ASE / MPE","Rx","Brands prescribed",comparator+" Rx","APP"],main_rows,6 if brand else None)
     mix=table_style("Observed Rx share by brand",["Brand","Distinct Rx","% of selected scope"],brand_share)
+    per_territory=table_style(f"Top {top_n} prescribers in every territory",
+        ["ASE / MPE","Rank","Prescriber / Code","Specialty","Rx",
+         "Brands observed",comparator+" Rx","APP"],territory_top_rows,
+         6 if brand else None)
     zero=table_style(f"Prescribers without observed {brand} Rx",["ASE / MPE","Prescriber","Specialty","Selected-scope Rx","Brands observed"],non_rows) if brand else ""
     territories_section=table_style("Territory-by-territory review",["ASE / MPE","Rx","Prescribers",comparator+" Rx","APP","Leading observed prescribers"],territory_rows,3 if brand else None)
     body=f"""<!DOCTYPE html><html><body style="background:#f0f2f4;margin:0;padding:16px;font-family:Arial,sans-serif;color:#263342;">
@@ -167,7 +179,7 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
 {kpi}
 {section("Action points")}
 <ol style="font:14px/1.6 Arial;color:#263342;">{"".join('<li style="margin-bottom:7px;">'+safe(x)+'</li>' for x in actions)}</ol>
-{top}{mix}{zero}{territories_section}
+{top}{mix}{zero}{territories_section}{per_territory}
 <p style="font:12px/1.5 Arial;color:#657381;margin-top:30px;">
 <b>Apparent Prescription Preference (APP)</b> = observed target-brand distinct Rx
 divided by all distinct Rx in the selected generic (when selected) for the same doctor or territory.
