@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 from routing import import_hierarchy
+from product_analysis import product_choices,filtered_rankings,has_product_index
 
 CSS="""
 QWidget{background:#071b17;color:#d9f7e7;font:12px 'Segoe UI'}
@@ -50,6 +51,14 @@ class Window(QMainWindow):
         for label,widget in [("DIVISION",self.division),("RSE / REGION",self.region),("ASE",self.ase),("TERRITORY",self.territory),("TOP N",self.top)]:
             column=QVBoxLayout();column.addWidget(QLabel(label));column.addWidget(widget);filters.addLayout(column)
         a.addLayout(filters)
+        product_filters=QHBoxLayout()
+        self.generic=QComboBox();self.brand=QComboBox()
+        for name,widget in [("GENERIC",self.generic),("BRAND",self.brand)]:
+            group=QVBoxLayout()
+            group.addWidget(QLabel(name))
+            group.addWidget(widget)
+            product_filters.addLayout(group)
+        a.addLayout(product_filters)
         self.metrics=[]
         stats=QHBoxLayout()
         for _ in range(3):
@@ -59,8 +68,8 @@ class Window(QMainWindow):
         refresh=QPushButton("↻  REFRESH");refresh.clicked.connect(self.refresh);actions.addWidget(refresh)
         export=QPushButton("↓  EXPORT CSV");export.clicked.connect(self.export);actions.addWidget(export)
         actions.addStretch();a.addLayout(actions)
-        self.table=QTableWidget();self.table.setColumnCount(10)
-        self.table.setHorizontalHeaderLabels(["RSE","ASE","Territory","#","Doctor Code","Prescriber","Specialty","Rx Count","Product Rows","Address"])
+        self.table=QTableWidget();self.table.setColumnCount(11)
+        self.table.setHorizontalHeaderLabels(["RSE","ASE","Territory","#","Doctor Code","Prescriber","Specialty","Rx Count","Product Rows","Address","APP %"])
         self.table.setAlternatingRowColors(True);self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.setColumnWidth(5,245);self.table.setColumnWidth(9,310);a.addWidget(self.table)
@@ -98,7 +107,9 @@ class Window(QMainWindow):
         self.division.currentTextChanged.connect(self.reset_filters)
         self.region.currentTextChanged.connect(self.update_ase)
         self.ase.currentTextChanged.connect(self.update_territory)
-        self.territory.currentTextChanged.connect(self.refresh)
+        self.territory.currentTextChanged.connect(self.reset_products)
+        self.generic.currentTextChanged.connect(self.update_brand)
+        self.brand.currentTextChanged.connect(self.refresh)
         self.top.valueChanged.connect(self.refresh)
         self.reset_filters();self.load_audit()
     def selected(self,c):
@@ -115,10 +126,28 @@ class Window(QMainWindow):
         self.update_territory()
     def update_territory(self,*args):
         self.fill(self.territory,choices(self.db,self.division.currentText(),"territory",self.selected(self.region),self.selected(self.ase)))
-        self.refresh()
+        self.reset_products()
+    def reset_products(self,*args):
+        try:
+            self.fill(self.generic,product_choices(self.db,self.division.currentText(),
+                "generic",self.selected(self.region),self.selected(self.ase),self.selected(self.territory)))
+            self.update_brand()
+        except Exception as e:self.error(str(e))
+    def update_brand(self,*args):
+        try:
+            self.fill(self.brand,product_choices(self.db,self.division.currentText(),
+                "brand",self.selected(self.region),self.selected(self.ase),self.selected(self.territory),
+                generic=self.selected(self.generic)))
+            self.refresh()
+        except Exception as e:self.error(str(e))
     def refresh(self,*args):
         try:
-            self.rows=ranking(self.db,self.division.currentText(),self.top.value(),self.selected(self.region),self.selected(self.ase),self.selected(self.territory))
+            self.rows=(filtered_rankings(self.db,self.division.currentText(),self.top.value(),
+                self.selected(self.region),self.selected(self.ase),self.selected(self.territory),
+                self.selected(self.brand),self.selected(self.generic))
+                if has_product_index(self.db) else
+                [tuple(r)+(None,) for r in ranking(self.db,self.division.currentText(),
+                 self.top.value(),self.selected(self.region),self.selected(self.ase),self.selected(self.territory))])
             self.table.setRowCount(len(self.rows))
             for i,row in enumerate(self.rows):
                 for j,v in enumerate(row):
@@ -168,7 +197,9 @@ class Window(QMainWindow):
         path=QFileDialog.getExistingDirectory(self,"Draft output folder",str(DATA))
         if not path:return
         try:
-            manifest=generate_drafts(self.db,Path(path)/"ACD_drafts",self.top.value())
+            manifest=generate_drafts(self.db,Path(path)/"ACD_drafts",
+                self.top.value(),brand=self.selected(self.brand),
+                generic=self.selected(self.generic),division="ACD")
             blocked=sum(x[1]=="BLOCKED" for x in manifest)
             QMessageBox.information(self,"Drafts created",f"{len(manifest)} drafts; {blocked} blocked for recipient/data issues.\nNo emails sent.")
         except Exception as e:self.error(str(e))
