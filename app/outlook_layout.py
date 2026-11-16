@@ -11,9 +11,9 @@ def esc(value):
 
 def heading(title,subtitle=""):
     return ('<tr><td style="padding:19px 24px 8px;">'
-      '<p style="margin:0;font-family:Arial,sans-serif;font-size:17px;line-height:22px;'
+      '<p style="margin:0;font-family:Tahoma,sans-serif;font-size:17px;line-height:22px;'
       'font-weight:bold;color:#155670;">'+esc(title)+'</p>'
-      +('<p style="margin:5px 0 0;font-family:Arial,sans-serif;font-size:11px;line-height:16px;color:#667784;">'+esc(subtitle)+'</p>' if subtitle else '')
+      +('<p style="margin:5px 0 0;font-family:Tahoma,sans-serif;font-size:11px;line-height:16px;color:#667784;">'+esc(subtitle)+'</p>' if subtitle else '')
       +'</td></tr>')
 
 def data_table(headers,rows,widths=None):
@@ -25,7 +25,7 @@ def data_table(headers,rows,widths=None):
        '<tr>']
     for i,h in enumerate(headers):
         s.append('<td width="'+str(widths[i])+'%" valign="top" bgcolor="#104f69" style="padding:8px 6px;'
-                 'background-color:#104f69;border:1px solid #dae1e5;font-family:Arial,sans-serif;'
+                 'background-color:#104f69;border:1px solid #dae1e5;font-family:Tahoma,sans-serif;'
                  'font-weight:bold;font-size:11px;line-height:15px;color:#ffffff;">'+esc(h)+'</td>')
     s.append('</tr>')
     for idx,row in enumerate(rows):
@@ -33,12 +33,12 @@ def data_table(headers,rows,widths=None):
         shade="#ffffff" if idx%2==0 else "#f3f6f7"
         for v in row:
             s.append('<td valign="top" bgcolor="'+shade+'" style="padding:7px 6px;background-color:'+shade+
-                     ';border:1px solid #dae1e5;word-break:break-word;font-family:Arial,sans-serif;'
+                     ';border:1px solid #dae1e5;word-break:break-word;font-family:Tahoma,sans-serif;'
                      'font-size:11px;line-height:16px;color:#273440;">'+esc(v)+'</td>')
         s.append('</tr>')
     if not rows:
         s.append('<tr><td colspan="'+str(len(headers))+'" style="padding:11px;color:#607080;'
-                 'font:12px Arial,sans-serif;">No matching observations.</td></tr>')
+                 'font:12px Tahoma,sans-serif;">No matching observations.</td></tr>')
     s.extend(['</table>','</td></tr>'])
     return ''.join(s)
 
@@ -50,9 +50,9 @@ def kpis(items):
     for i,(value,label) in enumerate(items):
         cells.append('<td width="25%" valign="top" align="center" bgcolor="'+backgrounds[i]+
           '" style="background-color:'+backgrounds[i]+';border:4px solid #ffffff;'
-          'padding:12px 4px;"><p style="margin:0;font-family:Arial,sans-serif;font-size:20px;'
+          'padding:12px 4px;"><p style="margin:0;font-family:Tahoma,sans-serif;font-size:20px;'
           'line-height:25px;font-weight:bold;color:'+colors[i]+';">'+esc(value)+
-          '</p><p style="margin:5px 0 0;font-family:Arial,sans-serif;font-size:11px;'
+          '</p><p style="margin:5px 0 0;font-family:Tahoma,sans-serif;font-size:11px;'
           'line-height:16px;color:#526473;">'+esc(label)+'</p></td>')
     return ('<tr><td style="padding:0 19px 6px;"><table role="presentation" width="100%" '
             'cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">'
@@ -60,9 +60,9 @@ def kpis(items):
 
 def bullets(lines):
     content=''.join(
-        '<tr><td width="24" valign="top" style="padding:4px 0;font:13px Arial,sans-serif;'
+        '<tr><td width="24" valign="top" style="padding:4px 0;font:13px Tahoma,sans-serif;'
         'color:#ad3347;">'+str(i)+'.</td><td valign="top" style="padding:4px 0;'
-        'font-family:Arial,sans-serif;font-size:12px;line-height:18px;'
+        'font-family:Tahoma,sans-serif;font-size:12px;line-height:18px;'
         'color:#273440;">'+esc(line)+'</td></tr>' for i,line in enumerate(lines,1))
     return heading("Action points")+(
         '<tr><td style="padding:4px 24px 8px;"><table role="presentation" width="100%" '
@@ -70,7 +70,7 @@ def bullets(lines):
 
 def note(text):
     return ('<tr><td style="padding:4px 24px 10px;"><p style="margin:0;'
-            'font-family:Arial,sans-serif;font-size:11px;line-height:17px;'
+            'font-family:Tahoma,sans-serif;font-size:11px;line-height:17px;'
             'color:#697988;">'+esc(text)+'</p></td></tr>')
 
 OUTLOOK_TEMPLATE=Template("""<!DOCTYPE html>
@@ -78,7 +78,7 @@ OUTLOOK_TEMPLATE=Template("""<!DOCTYPE html>
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <title>Prescriber Intelligence — Regional Rx Review</title>
-<!--[if mso]><style type="text/css">body,table,td,p{font-family:Arial,sans-serif !important;} table{border-collapse:collapse;}</style><![endif]-->
+<!--[if mso]><style type="text/css">body,table,td,p{font-family:Tahoma,sans-serif !important;} table{border-collapse:collapse;}</style><![endif]-->
 </head>
 <body bgcolor="#eef1f3" style="margin:0;padding:0;background-color:#eef1f3;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#eef1f3" style="background-color:#eef1f3;border-collapse:collapse;">
@@ -86,13 +86,13 @@ OUTLOOK_TEMPLATE=Template("""<!DOCTYPE html>
 <!--[if mso]><table role="presentation" width="640" align="center" border="0" cellpadding="0" cellspacing="0"><tr><td><![endif]-->
 <table role="presentation" width="640" align="center" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:640px;max-width:640px;background-color:#ffffff;border-collapse:collapse;">
 <tr><td bgcolor="#104f69" style="background-color:#104f69;padding:21px 24px;">
-<p style="margin:0 0 6px;font-family:Arial,sans-serif;font-size:11px;line-height:16px;font-weight:bold;letter-spacing:1px;color:#d6eaf0;">PRESCRIBER INTELLIGENCE &nbsp;|&nbsp; $DIVISION &nbsp;|&nbsp; $PERIOD</p>
-<p style="margin:0;font-family:Arial,sans-serif;font-size:22px;line-height:29px;font-weight:bold;color:#ffffff;">$REGION — $GENERIC Rx Review</p>
-<p style="margin:7px 0 0;font-family:Arial,sans-serif;font-size:12px;line-height:18px;color:#d6eaf0;">Observed survey &nbsp;&bull;&nbsp; $SCOPE</p>
+<p style="margin:0 0 6px;font-family:Tahoma,sans-serif;font-size:11px;line-height:16px;font-weight:bold;letter-spacing:1px;color:#d6eaf0;">PRESCRIBER INTELLIGENCE &nbsp;|&nbsp; $DIVISION &nbsp;|&nbsp; $PERIOD</p>
+<p style="margin:0;font-family:Tahoma,sans-serif;font-size:22px;line-height:29px;font-weight:bold;color:#ffffff;">$REGION — $GENERIC Rx Review</p>
+<p style="margin:7px 0 0;font-family:Tahoma,sans-serif;font-size:12px;line-height:18px;color:#d6eaf0;">Observed survey &nbsp;&bull;&nbsp; $SCOPE</p>
 </td></tr>
 <tr><td style="padding:22px 24px 9px;">
-<p style="margin:0 0 10px;font-family:Arial,sans-serif;font-size:14px;line-height:20px;color:#273440;">Dear $RECIPIENT,</p>
-<p style="margin:0;font-family:Arial,sans-serif;font-size:13px;line-height:21px;color:#273440;">$INTRO</p>
+<p style="margin:0 0 10px;font-family:Tahoma,sans-serif;font-size:14px;line-height:20px;color:#273440;">Dear $RECIPIENT,</p>
+<p style="margin:0;font-family:Tahoma,sans-serif;font-size:13px;line-height:21px;color:#273440;">$INTRO</p>
 </td></tr>
 $KPI_SECTION
 $SUMMARY_NOTE
@@ -103,10 +103,10 @@ $OPPORTUNITY_SECTION
 $TERRITORY_SECTION
 $METHOD_SECTION
 <tr><td style="padding:9px 24px 18px;">
-<p style="margin:0 0 12px;font-family:Arial,sans-serif;font-size:13px;line-height:20px;color:#273440;">This report is for your review and necessary follow-up. Please verify the data context before acting.</p>
-<p style="margin:0;font-family:Arial,sans-serif;font-size:13px;line-height:20px;color:#273440;">Regards,<br><strong>Prescriber Intelligence</strong></p>
+<p style="margin:0 0 12px;font-family:Tahoma,sans-serif;font-size:13px;line-height:20px;color:#273440;">This report is for your review and necessary follow-up. Please verify the data context before acting.</p>
+<p style="margin:0;font-family:Tahoma,sans-serif;font-size:13px;line-height:20px;color:#273440;">Regards,<br><strong>Prescriber Intelligence</strong></p>
 </td></tr>
-<tr><td bgcolor="#eef2f5" style="background-color:#eef2f5;border-top:1px solid #d9e0e3;padding:12px 24px;"><p style="margin:0;font-family:Arial,sans-serif;font-size:11px;line-height:16px;color:#637480;">Internal analytical report &nbsp;|&nbsp; $DIVISION &nbsp;|&nbsp; $PERIOD &nbsp;|&nbsp; Not a national market-share estimate</p></td></tr>
+<tr><td bgcolor="#eef2f5" style="background-color:#eef2f5;border-top:1px solid #d9e0e3;padding:12px 24px;"><p style="margin:0;font-family:Tahoma,sans-serif;font-size:11px;line-height:16px;color:#637480;">Internal analytical report &nbsp;|&nbsp; $DIVISION &nbsp;|&nbsp; $PERIOD &nbsp;|&nbsp; Not a national market-share estimate</p></td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
 </td></tr></table></body></html>""")
