@@ -189,6 +189,8 @@ class Window(QMainWindow):
             try:
                 db=connect(memory)
                 n=import_rx(db,path,lambda count:self.signals.progress.emit(count),sheet_name=selected,memory_gb=memory)
+                db.close()
+                db=None
                 self.signals.done.emit(n)
             except Exception:self.signals.error.emit(traceback.format_exc())
             finally:
