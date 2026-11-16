@@ -29,6 +29,7 @@ class Window(QMainWindow):
     def __init__(self):
         super().__init__()
         self.memory_gb=4
+        self.rx_path=None
         self.db=connect(self.memory_gb)
         self.rows=[]
         self.setWindowTitle("Prescriber Intelligence | Emerald Edition")
@@ -84,7 +85,10 @@ class Window(QMainWindow):
         self.memory=QSpinBox();self.memory.setRange(1,16);self.memory.setValue(4)
         self.memory.setSuffix(" GB");memorybox.addWidget(self.memory);settings.addLayout(memorybox)
         d.addLayout(settings)
-        pick=QPushButton("SELECT XLSX AND IMPORT INTO DUCKDB");pick.clicked.connect(self.pick_rx);d.addWidget(pick)
+        pick=QPushButton("SELECT EXCEL WORKBOOK");pick.clicked.connect(self.pick_rx);d.addWidget(pick)
+        self.source_label=QLabel("No Excel workbook selected");d.addWidget(self.source_label)
+        importbtn=QPushButton("IMPORT SELECTED WORKSHEET TO DUCKDB")
+        importbtn.clicked.connect(self.import_selected);d.addWidget(importbtn)
         self.progress=QProgressBar();d.addWidget(self.progress)
         self.log=QTextEdit();self.log.setReadOnly(True);self.log.setPlainText("Database: "+str(DB));d.addWidget(self.log)
         self.division.currentTextChanged.connect(self.reset_filters)
@@ -156,16 +160,23 @@ class Window(QMainWindow):
             names=available_sheets(path)
         except Exception as e:
             return self.error("Could not open Excel workbook: "+str(e))
-        requested=self.sheet.currentText().strip()
+        previous=self.sheet.currentText().strip()
         self.sheet.clear();self.sheet.addItems(names)
-        if requested in names:self.sheet.setCurrentText(requested)
-        selected=self.sheet.currentText()
-        if selected not in names:return self.error("Choose an existing worksheet.")
-        self.log.append("Available sheets: "+", ".join(names))
+        if previous in names:self.sheet.setCurrentText(previous)
+        else:self.log.append("Sheet1 not found; choose from: "+", ".join(names))
+        self.rx_path=path
+        self.source_label.setText("Selected workbook: "+Path(path).name)
+        self.log.append("Available worksheets: "+", ".join(names))
+    def import_selected(self):
+        path=self.rx_path
+        if not path:return self.error("Choose an Excel workbook first.")
+        selected=self.sheet.currentText().strip()
+        if selected not in available_sheets(path):
+            return self.error("Worksheet "+repr(selected)+" does not exist in the chosen workbook.")
         answer=QMessageBox.question(self,"Confirm import",
             f"Import worksheet {selected!r} using {self.memory.value()} GB DuckDB memory?\\n"
-            "Excel headers and imported row counts will be validated.\\n"
-            "Previous Rx rankings will be preserved if the import fails.")
+            "Excel headers and row counts will be validated.\\n"
+            "Existing rankings will be preserved if the import fails.")
         if answer!=QMessageBox.Yes:return
         memory=self.memory.value()
         self.progress.setRange(0,0)
@@ -174,11 +185,14 @@ class Window(QMainWindow):
         self.signals.error.connect(self.failed)
         self.signals.progress.connect(lambda n:self.log.append(f"Read {n:,} rows"))
         def run():
+            db=None
             try:
                 db=connect(memory)
                 n=import_rx(db,path,lambda count:self.signals.progress.emit(count),sheet_name=selected,memory_gb=memory)
-                db.close();self.signals.done.emit(n)
+                self.signals.done.emit(n)
             except Exception:self.signals.error.emit(traceback.format_exc())
+            finally:
+                if db is not None:db.close()
         threading.Thread(target=run,daemon=True).start()
     def imported(self,n):
         self.progress.setRange(0,100);self.progress.setValue(100)
