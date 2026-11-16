@@ -1,5 +1,5 @@
 """Local DuckDB analytics. Confidential inputs are never sent to GitHub."""
-import csv, io, re, sys
+import csv, io, re, sys, shutil, uuid
 from pathlib import Path
 from email.message import EmailMessage
 import duckdb
@@ -12,9 +12,11 @@ DB=DATA/"prescriber.duckdb"
 FIELDS=["entry_date","rx_date","source_type","rx_serial","dr_code","dr_name","degree","specialty","address","acd_mpe","acd_ase","acd_rse","ccd_mpe","ccd_ase","ccd_rse","dosage","product","strength","brand","product_code","company","bpl_division","therapy","generic"]
 HEADERS=["RSE","ASE","Territory","Rank","Doctor Code","Prescriber","Specialty","Prescriptions","Product Rows","Address"]
 
-def connect():
+def connect(memory_gb=4):
+    memory_gb=max(1,min(16,int(memory_gb)))
     db=duckdb.connect(str(DB))
-    db.execute("SET memory_limit='1GB'")
+    db.execute(f"SET memory_limit='{memory_gb}GB'")
+    db.execute(f"SET temp_directory='{str(DATA / 'duckdb_tmp').replace(chr(39), chr(39)*2)}'")
     db.execute("CREATE TABLE IF NOT EXISTS recipients (division VARCHAR,region VARCHAR,zone VARCHAR,rse_name VARCHAR,rse_email VARCHAR,ase_emails VARCHAR,zsi_name VARCHAR,zsi_email VARCHAR,audit_status VARCHAR)")
     return db
 
@@ -26,35 +28,93 @@ def import_audit(db,path):
     if payload:db.executemany("INSERT INTO recipients VALUES (?,?,?,?,?,?,?,?,?)",payload)
     return len(payload)
 
-def import_rx(db,path,progress=None):
-    path=Path(path)
-    csvpath=DATA/"_staging_rx.csv"
-    count=0
+SOURCE_HEADERS=[
+    "Entry Date","Prescription Date","Rx Source Type","Rx Sl No",
+    "Dr Code","Dr Name/Institute Name","Doc Degree","Doc Specialty",
+    "Detail Address","ACD MPE","ACD ASE","ACD RSE",
+    "CCD. MPE Code","CCD.ASE Code","CCD. RSE Code",
+    "Dosage Description","Product Name","Strength","Brand Name",
+    "SFE Product Code","Company Name","Division BPL","TG_l(All)","Generic Name"
+]
+
+def available_sheets(path):
+    wb=load_workbook(path,read_only=True,data_only=True)
     try:
-        wb=load_workbook(path,read_only=True,data_only=True)
-        ws=wb.worksheets[0]
-        with open(csvpath,"w",encoding="utf-8",newline="") as f:
-            w=csv.writer(f)
-            w.writerow(FIELDS)
-            for i,row in enumerate(ws.iter_rows(values_only=True)):
-                if i==0:continue
-                values=["" if x is None else str(x) for x in row[:24]]
-                if not any(values[:6]):continue
-                w.writerow((values+[""]*24)[:24])
+        return list(wb.sheetnames)
+    finally:
+        wb.close()
+
+def _normalized(value):
+    return re.sub(r"[^a-z0-9]","",str(value or "").lower())
+
+def _header_mapping(header):
+    actual={}
+    for index, name in enumerate(header):
+        normalized=_normalized(name)
+        if normalized:
+            if normalized in actual:
+                raise ValueError(f"Duplicate Excel header: {name!r}")
+            actual[normalized]=index
+    positions=[]
+    missing=[]
+    for source, canonical in zip(SOURCE_HEADERS,FIELDS):
+        position=actual.get(_normalized(source),actual.get(_normalized(canonical)))
+        if position is None:missing.append(source)
+        else:positions.append(position)
+    if missing:
+        raise ValueError("Missing required Excel headers: "+", ".join(missing)
+            +". Found: "+", ".join(str(h) for h in header))
+    return positions
+
+def import_rx(db,path,progress=None,sheet_name="Sheet1",memory_gb=4):
+    """Stream validated XLSX rows, then atomically replace DuckDB tables."""
+    path=Path(path)
+    if not path.is_file():raise FileNotFoundError(path)
+    wb=load_workbook(path,read_only=True,data_only=True)
+    staging=DATA/("_staging_rx_"+uuid.uuid4().hex+".csv")
+    count=0
+    started=False
+    try:
+        if sheet_name not in wb.sheetnames:
+            raise ValueError(f"Worksheet {sheet_name!r} not found. Available sheets: "
+                             +", ".join(repr(n) for n in wb.sheetnames))
+        ws=wb[sheet_name]
+        rows=ws.iter_rows(values_only=True)
+        header=next(rows,None)
+        if header is None:raise ValueError("Selected worksheet is empty")
+        indices=_header_mapping(header)
+        if ws.max_row and ws.max_row>1_048_576:
+            raise ValueError("Worksheet exceeds Excel's maximum row count")
+        free=shutil.disk_usage(DATA).free
+        if free < max(512*1024*1024, path.stat().st_size*3):
+            raise OSError("Insufficient disk space for streaming import; free at least 512 MB")
+        with open(staging,"w",encoding="utf-8",newline="") as f:
+            writer=csv.writer(f,quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(FIELDS)
+            for excel_row,row in enumerate(rows,start=2):
+                values=["" if row[i] is None else str(row[i])
+                        for i in indices]
+                if not any(values):continue
+                if not values[4].strip():
+                    raise ValueError(f"Missing Dr Code on Excel row {excel_row}")
+                writer.writerow(values)
                 count+=1
                 if progress and count%20000==0:progress(count)
-        wb.close()
-        escaped=str(csvpath).replace("'","''")
-        # Python csv.writer uses RFC 4180 quoting, including doubled double-quotes.
-        # Explicit parsing is essential: DuckDB's auto-detection can miss quoted
-        # fields that only appear after hundreds of thousands of Excel rows.
-        columns_sql="{"+", ".join("'"+name+"': 'VARCHAR'" for name in FIELDS)+"}"
+        if count==0:raise ValueError("No prescription data rows in the selected worksheet")
+        escaped=str(staging).replace("'","''")
+        column_sql="{"+", ".join("'"+field+"': 'VARCHAR'" for field in FIELDS)+"}"
+        db.execute(f"SET memory_limit='{max(1,min(16,int(memory_gb)))}GB'")
+        db.execute("BEGIN TRANSACTION")
+        started=True
         db.execute(
             "CREATE OR REPLACE TABLE rx AS SELECT * FROM read_csv('"+escaped
-            +"', auto_detect=false, columns="+columns_sql
+            +"', auto_detect=false, columns="+column_sql
             +", header=true, delim=',', quote='"+chr(34)+"', escape='"+chr(34)+"'"
             +", max_line_size=10000000)"
         )
+        loaded=db.execute("SELECT COUNT(*) FROM rx").fetchone()[0]
+        if loaded!=count:
+            raise ValueError(f"Import mismatch: Excel {count:,} rows, DuckDB {loaded:,} rows")
         db.execute("""CREATE OR REPLACE TABLE prescribers AS
         WITH expanded AS (
             SELECT 'ACD' division,acd_rse region,acd_ase ase,acd_mpe territory,dr_code,dr_name,specialty,address,
@@ -66,9 +126,16 @@ def import_rx(db,path,progress=None):
         SELECT division,region,ase,territory,dr_code,max(dr_name) dr_name,max(specialty) specialty,max(address) address,
         count(DISTINCT rx_key) prescriptions,count(*) product_rows
         FROM expanded WHERE trim(coalesce(dr_code,''))<>'' GROUP BY 1,2,3,4,5""")
+        db.execute("COMMIT")
+        started=False
         return count
+    except BaseException:
+        if started:
+            db.execute("ROLLBACK")
+        raise
     finally:
-        csvpath.unlink(missing_ok=True)
+        wb.close()
+        staging.unlink(missing_ok=True)
 
 def has_rankings(db):
     return bool(db.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='prescribers'").fetchone()[0])
