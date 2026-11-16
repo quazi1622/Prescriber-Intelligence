@@ -1,0 +1,9 @@
+data/
+*.xlsx
+*.csv
+*.duckdb
+*.eml
+__pycache__/
+build/
+dist/
+.buildvenv/
