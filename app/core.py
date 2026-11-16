@@ -168,25 +168,43 @@ def write_csv(rows,path):
         w=csv.writer(f);w.writerow(HEADERS);w.writerows(rows)
 
 def generate_drafts(db,outdir,top_n=10):
+    """Generate local, unsent EMLs; never attach data to a blocked routing record."""
     outdir=Path(outdir);outdir.mkdir(parents=True,exist_ok=True)
     manifest=[]
-    for region,zone,name,email,ases,zname,zemail,status in db.execute("SELECT region,zone,rse_name,rse_email,ase_emails,zsi_name,zsi_email,audit_status FROM recipients WHERE division='ACD' ORDER BY region").fetchall():
+    for region,zone,name,email,ases,zname,zemail,status in db.execute(
+        "SELECT region,zone,rse_name,rse_email,ase_emails,zsi_name,zsi_email,audit_status "
+        "FROM recipients WHERE division='ACD' ORDER BY region").fetchall():
         rows=ranking(db,"ACD",top_n,region=region)
-        valid=bool(email and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+",email) and rows)
+        def good(value):
+            return bool(value and re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",value))
+        # Audit import may store free-form status; only validated hierarchy's
+        # explicit Ready status authorizes live-addressed draft output.
+        permitted=(status=="Ready" and good(email) and good(zemail) and bool(rows))
+        cc_candidates=[s.strip() for s in (ases or "").replace(",", ";").split(";") if s.strip()]
+        cc_candidates.append(zemail or "")
+        invalid_cc=[e for e in cc_candidates if e and not good(e)]
+        if invalid_cc:permitted=False
+        unique_cc=list(dict.fromkeys(e for e in cc_candidates if good(e) and e.lower()!=(email or "").lower()))
         msg=EmailMessage()
-        if valid:msg["To"]=email
-        else:msg["X-Recipient-Review"]="BLOCKED: missing RSE address or Rx data"
-        cc=list(dict.fromkeys(x.strip() for x in (ases or "").split(";")+[zemail or ""] if x.strip()))
-        if cc:msg["Cc"]=", ".join(cc)
+        if permitted:
+            msg["To"]=email
+            if unique_cc:msg["Cc"]=", ".join(unique_cc)
+        else:
+            msg["X-Recipient-Review"]="BLOCKED: recipient hierarchy, missing report or email needs review"
         msg["Subject"]=f"[DRAFT] ACD {region} — Top {top_n} prescribers by territory"
-        msg.set_content("Dear "+(name or "Regional Sales Executive")+",\n\nAttached is the territory-level prescriber report for your region.\n\nPlease verify recipients, reporting period and ranking definitions before sending.\n\nThis is a draft and was not sent.\n")
-        if rows:
+        msg.set_content(
+            "Dear "+(name or "Regional Sales Executive")+",\n\n"
+            "Attached is the territory-level prescriber report for your region.\n\n"
+            "Verify recipients, reporting period and ranking definitions before sending.\n"
+            "This draft was not sent.\n")
+        if permitted:
             stream=io.StringIO();w=csv.writer(stream);w.writerow(HEADERS);w.writerows(rows)
-            msg.add_attachment(stream.getvalue().encode("utf-8-sig"),maintype="text",subtype="csv",filename=f"ACD_{region}_Top_{top_n}.csv")
+            msg.add_attachment(stream.getvalue().encode("utf-8-sig"),maintype="text",
+                               subtype="csv",filename=f"ACD_{region}_Top_{top_n}.csv")
         filename=f"ACD_{region}_Top_{top_n}.eml"
         (outdir/filename).write_bytes(msg.as_bytes())
-        manifest.append([region,"REVIEW" if valid else "BLOCKED",len(rows),filename])
-    write_csv_manifest=outdir/"draft_manifest.csv"
-    with open(write_csv_manifest,"w",encoding="utf-8-sig",newline="") as f:
-        w=csv.writer(f);w.writerow(["Region","Status","Rows","File"]);w.writerows(manifest)
+        manifest.append([region,"REVIEW" if permitted else "BLOCKED",len(rows),filename,
+                         "" if permitted else (status or "Missing routing status")])
+    with open(outdir/"draft_manifest.csv","w",encoding="utf-8-sig",newline="") as f:
+        w=csv.writer(f);w.writerow(["Region","Status","Ranking rows","File","Routing issue"]);w.writerows(manifest)
     return manifest
