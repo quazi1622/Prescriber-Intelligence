@@ -4,8 +4,12 @@ from pathlib import Path
 from email.message import EmailMessage
 import duckdb
 from openpyxl import load_workbook
-from product_analysis import create_product_index, filtered_rankings
-from html_report import build_region_report
+try:
+    from .product_analysis import create_product_index, filtered_rankings
+    from .html_report import build_region_report
+except ImportError:
+    from product_analysis import create_product_index, filtered_rankings
+    from html_report import build_region_report
 
 ROOT=Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parents[1]
 DATA=ROOT/"data"
