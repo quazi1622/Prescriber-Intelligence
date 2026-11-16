@@ -63,7 +63,7 @@ def filtered_rankings(db,division="ACD",top_n=10,region="",ase="",territory="",b
       ), ordered AS (
         SELECT m.region,m.ase,m.territory,m.dr_code,m.dr_name,m.specialty,
            m.selected_rx,m.item_rows,
-           CASE WHEN r.total_rx>0 THEN round(100.0*m.selected_rx/r.total_rx,1) END AS app_pct,
+           CASE WHEN ? AND r.total_rx>0 THEN round(100.0*m.selected_rx/r.total_rx,1) END AS app_pct,
            row_number() over(partition by m.region,m.ase,m.territory
              order by m.selected_rx DESC,m.dr_code) AS place
         FROM matching m JOIN reference r USING (division,region,ase,territory,dr_code)
@@ -72,7 +72,7 @@ def filtered_rankings(db,division="ACD",top_n=10,region="",ase="",territory="",b
              selected_rx,item_rows,'' AS address,app_pct
       FROM ordered WHERE place<=?
       ORDER BY region,ase,territory,place"""
-    return db.execute(sql,args+baseline_args+[max(1,min(20,int(top_n)))]).fetchall()
+    return db.execute(sql,args+baseline_args+[bool(brand),max(1,min(20,int(top_n)))]).fetchall()
 
 def breakdown(db,division,region,generic="",brand=""):
     """Generic-scope brand counts, counting each Rx once per brand."""
