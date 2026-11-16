@@ -52,6 +52,9 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(n,12)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM rx").fetchone()[0],12)
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM prescribers").fetchone()[0],2)
+        self.assertIn("company", [row[1] for row in
+            self.db.execute("PRAGMA table_info('rx_items')").fetchall()])
+        self.assertEqual(self.db.execute("SELECT count(*) FROM rx_items").fetchone()[0],24)
         self.assertEqual(self.db.execute("SELECT dr_name FROM rx LIMIT 1").fetchone()[0], 'Dr "Quote", Name\nNew line')
 
     def test_reject_malformed_headers_without_overwriting(self):
