@@ -62,7 +62,8 @@ class HierarchyTests(unittest.TestCase):
         self.db.execute("""CREATE TABLE rx_items AS SELECT 'ACD' AS division,
             'R01' AS region, 'ASE1' AS ase, 'T01' AS territory,
             'DR1' AS dr_code,'Doctor' AS dr_name,'GP' AS specialty,
-            'Azithrocin' AS brand,'Azithromycin' AS generic,'RX1' AS rx_key""")
+            'Azithrocin' AS brand,'Azithromycin' AS generic,'RX1' AS rx_key,
+            'Beximco Pharmaceuticals PLC' AS company""")
         items=core.generate_drafts(self.db,self.path/"drafts",top_n=2,
                                    brand="Azithrocin",generic="Azithromycin")
         self.assertEqual(len(items),51)
