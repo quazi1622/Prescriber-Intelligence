@@ -4,6 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
+from routing import import_hierarchy
 
 CSS="""
 QWidget{background:#071b17;color:#d9f7e7;font:12px 'Segoe UI'}
@@ -69,6 +70,9 @@ class Window(QMainWindow):
         self.auditlabel=QLabel("Import local recipient audit to activate 51-region draft generation.")
         m.addWidget(self.auditlabel)
         audit=QPushButton("IMPORT ACD RECIPIENT AUDIT CSV");audit.clicked.connect(self.pick_audit);m.addWidget(audit)
+        hierarchy=QPushButton("IMPORT ACD RSE–ZSI HIERARCHY EXCEL")
+        hierarchy.clicked.connect(self.pick_hierarchy)
+        m.addWidget(hierarchy)
         draft=QPushButton("GENERATE ACD .EML DRAFTS");draft.setObjectName("red");draft.clicked.connect(self.drafts);m.addWidget(draft)
         self.recipients=QTableWidget();self.recipients.setColumnCount(5)
         self.recipients.setHorizontalHeaderLabels(["Region","RSE","Email","ASE CC Count","ZSI Email"])
@@ -144,6 +148,21 @@ class Window(QMainWindow):
     def load_audit_after(self,path):
         n=import_audit(self.db,path);self.load_audit()
         QMessageBox.information(self,"Imported",f"Loaded {n} ACD groups.")
+    def pick_hierarchy(self):
+        path,_=QFileDialog.getOpenFileName(
+            self,"Select ACD RSE–ZSI hierarchy workbook",str(DATA),"Excel (*.xlsx)")
+        if not path:return
+        try:
+            result=import_hierarchy(self.db,path)
+            self.load_audit()
+            message=(f"{result['regions']} ACD regions mapped; {result['ready']} ready, "
+                     f"{result['blocked']} blocked. Existing ASE lists retained for "
+                     f"{result['ase_lists_preserved']} regions.\\n"
+                     "Unresolved hierarchy entries will produce blocked, unsendable drafts.")
+            self.log.append(message)
+            QMessageBox.information(self,"Hierarchy import completed",message)
+        except Exception as e:
+            self.error(str(e))
     def drafts(self):
         if not has_rankings(self.db):return self.error("Import Rx data first.")
         path=QFileDialog.getExistingDirectory(self,"Draft output folder",str(DATA))
