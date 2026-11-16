@@ -59,7 +59,12 @@ class HierarchyTests(unittest.TestCase):
              'R08' region, 'ASE1' ase, 'T1' territory, 'DR1' dr_code,
              'Doctor' dr_name, 'GP' specialty, 'Address' address,
              2 prescriptions, 2 product_rows""")
-        items=core.generate_drafts(self.db,self.path/"drafts",top_n=2)
+        self.db.execute("""CREATE TABLE rx_items AS SELECT 'ACD' AS division,
+            'R01' AS region, 'ASE1' AS ase, 'T01' AS territory,
+            'DR1' AS dr_code,'Doctor' AS dr_name,'GP' AS specialty,
+            'Azithrocin' AS brand,'Azithromycin' AS generic,'RX1' AS rx_key""")
+        items=core.generate_drafts(self.db,self.path/"drafts",top_n=2,
+                                   brand="Azithrocin",generic="Azithromycin")
         self.assertEqual(len(items),51)
         message=BytesParser(policy=policy.default).parsebytes((self.path/"drafts"/"ACD_R08_Top_2.eml").read_bytes())
         self.assertIsNone(message.get("To"))
