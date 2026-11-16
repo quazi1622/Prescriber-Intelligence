@@ -45,7 +45,16 @@ def import_rx(db,path,progress=None):
                 if progress and count%20000==0:progress(count)
         wb.close()
         escaped=str(csvpath).replace("'","''")
-        db.execute("CREATE OR REPLACE TABLE rx AS SELECT * FROM read_csv_auto('"+escaped+"',header=true,all_varchar=true)")
+        # Python csv.writer uses RFC 4180 quoting, including doubled double-quotes.
+        # Explicit parsing is essential: DuckDB's auto-detection can miss quoted
+        # fields that only appear after hundreds of thousands of Excel rows.
+        columns_sql="{"+", ".join("'"+name+"': 'VARCHAR'" for name in FIELDS)+"}"
+        db.execute(
+            "CREATE OR REPLACE TABLE rx AS SELECT * FROM read_csv('"+escaped
+            +"', auto_detect=false, columns="+columns_sql
+            +", header=true, delim=',', quote='\\\"', escape='\\\"'"
+            +", max_line_size=10000000)"
+        )
         db.execute("""CREATE OR REPLACE TABLE prescribers AS
         WITH expanded AS (
             SELECT 'ACD' division,acd_rse region,acd_ase ase,acd_mpe territory,dr_code,dr_name,specialty,address,
