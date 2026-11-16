@@ -52,7 +52,7 @@ def import_rx(db,path,progress=None):
         db.execute(
             "CREATE OR REPLACE TABLE rx AS SELECT * FROM read_csv('"+escaped
             +"', auto_detect=false, columns="+columns_sql
-            +", header=true, delim=',', quote='\\\"', escape='\\\"'"
+            +", header=true, delim=',', quote='"+chr(34)+"', escape='"+chr(34)+"'"
             +", max_line_size=10000000)"
         )
         db.execute("""CREATE OR REPLACE TABLE prescribers AS
