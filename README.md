@@ -30,3 +30,18 @@ This is an initial build: native Windows end-to-end runtime testing remains nece
 ## Building
 
 Pushes to `main` trigger the Windows Actions workflow with synthetic import, hierarchy and HTML-report tests before building. Check GitHub Actions for a green result and download its artifact. Compilation, Windows execution and real 700k-row stress testing must be verified independently.
+
+
+## Beximco brand / competitor Rx share by generic
+
+After updating, re-import the Excel Rx worksheet so `rx_items` includes the `Company Name` field. Then choose a **Generic** in the Analytics tab.
+
+- **Beximco Brand Rx Share (%)** = unique observed prescriptions for the generic containing any brand with `Company Name` normalized to a value beginning with `Beximco`, divided by all unique observed prescriptions for that generic in the selected division, region, ASE and MPE.
+- **Competitor Rx Share (%)** = unique observed prescriptions for the generic containing a nonempty `Company Name` not classified as Beximco, divided by the **same** generic prescription denominator.
+- **Unclassified Company Share (%)** = prescriptions containing at least one row without a company name; do not assume they belong to competitors.
+- **Overlapping Rx** = prescriptions that list both Beximco and competitor manufacturers. The two shares can sum above 100%; each is a prescription-presence share rather than an exclusive unit market share.
+- **Selected Brand Share (%)** = unique observed prescriptions containing the selected brand divided by the generic total. This is distinct from aggregate **Beximco Brand Rx Share**, which includes all identified Beximco brands.
+
+The report emails now include Beximco / competitor KPI tiles and a ranked **Leading competitor brands** table with distinct Rx counts and shares. Reports are still sent as unsent, locally generated, HTML-bodied `.eml` files with no CSV attachment. The exact `Company Name` source values should be audited for aliases before using this as an operational metric (e.g., abbreviations should not be silently interpreted as a manufacturer).
+
+All shares refer to the imported observed sample, not a verified population market share. **Generic selection is mandatory** for manufacturer shares; unfiltered data do not yield a clinically meaningful denominator.
