@@ -2,6 +2,7 @@
 import csv, io, re, sys, shutil, uuid
 from pathlib import Path
 from email.message import EmailMessage
+from email import policy
 from email.utils import formatdate, make_msgid
 import duckdb
 from openpyxl import load_workbook
@@ -213,7 +214,10 @@ def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD",sender
             msg["To"]=email
             if unique_cc:msg["Cc"]=", ".join(unique_cc)
             msg.set_content(report["text"])
-            msg.add_alternative(report["html"],subtype="html")
+            # Local Outlook .eml drafts use 8bit HTML so the file contains
+            # literal tags rather than quoted-printable =3D escapes/soft wraps.
+            # This avoids clients that incorrectly render encoded source text.
+            msg.add_alternative(report["html"],subtype="html",cte="8bit")
         else:
             msg["X-Recipient-Review"]="BLOCKED: recipient hierarchy or no matching Rx data"
             msg.set_content("BLOCKED DRAFT — Do not send.\n"
@@ -221,7 +225,7 @@ def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD",sender
                             +"Reason: "+str(status or "Missing routing")+"\n"
                             +"Matching prescription data may also be unavailable.\n")
         filename=f"ACD_{region}_Top_{top_n}.eml"
-        (outdir/filename).write_bytes(msg.as_bytes())
+        (outdir/filename).write_bytes(msg.as_bytes(policy=policy.SMTP))
         manifest.append([region,"REVIEW" if permitted else "BLOCKED",
                          report["rx"] if report else 0,filename,
                          "" if permitted else (status or "No matching Rx / invalid CC")])
