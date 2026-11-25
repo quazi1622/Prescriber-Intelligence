@@ -45,3 +45,18 @@ After updating, re-import the Excel Rx worksheet so `rx_items` includes the `Com
 The report emails now include Beximco / competitor KPI tiles and a ranked **Leading competitor brands** table with distinct Rx counts and shares. Reports are still sent as unsent, locally generated, HTML-bodied `.eml` files with no CSV attachment. The exact `Company Name` source values should be audited for aliases before using this as an operational metric (e.g., abbreviations should not be silently interpreted as a manufacturer).
 
 All shares refer to the imported observed sample, not a verified population market share. **Generic selection is mandatory** for manufacturer shares; unfiltered data do not yield a clinically meaningful denominator.
+
+
+## Revised doctor-level Rx Share Analytics
+
+Select a **Generic** (for example, Azithromycin) and a target **Brand** (Azithrocin is automatically selected when available). The top-prescriber table is grouped by ACD/CCD → RSE → ASE → MPE and **ranked by descending distinct Rx count for the selected generic**, with target-brand count and competitor count used as tie-breakers. The three shares for each doctor use:
+
+1. **Generic Rx Share (%)** = doctor's distinct Rx containing the selected generic / doctor's distinct Rx for all generics, within the same territory × 100.
+2. **Azithrocin / Selected Brand Rx Share (%)** = doctor's distinct selected-brand Rx / doctor's distinct Rx for the selected generic, within that territory × 100.
+3. **Competitor Rx Share (%)** = doctor's distinct selected-generic Rx featuring a non-Beximco manufacturer / doctor's distinct Rx for that generic, within the territory × 100.
+
+The main KPI cards aggregate these shares over the selected division, region, ASE and territory using distinct Rx numerators/denominators, rather than averaging doctor percentages. Competitor-only selection does not artificially narrow the denominator.
+
+**Competitor brand share table:** This is **always grouped at the RSE regional level** within the selected generic. Choosing an ASE or MPE affects the doctor-level table and KPI cards, but **does not change the competitor-brand table**. If all RSE regions are selected, rows include the RSE code and each brand's **regional** generic-Rx denominator. Rows are sorted by observed competitor-brand Rx descending *within each region* (equivalent to share descending because the region's denominator is fixed).
+
+Shares reflect observed Rx presence and can overlap if one Rx lists multiple brands/manufacturers. Empty Company Name is unclassified, not assumed to be a competitor. A single prescription must have a reliable unique Rx identifier. For the new ranking, the same Rx key is deduplicated per doctor/territory. Data remain local and are not uploaded to GitHub.
