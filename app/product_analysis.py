@@ -188,3 +188,100 @@ def competitor_brand_shares(db,division,generic,region="",ase="",territory="",li
         GROUP BY brand ORDER BY n DESC,brand LIMIT ?"""
     rows=db.execute(sql,args+[max(1,min(100,int(limit)))]).fetchall()
     return [(brand,int(n),round(100*n/base["total_rx"],1)) for brand,n in rows]
+
+
+def prescriber_share_rankings(db,division="ACD",top_n=10,region="",ase="",territory="",generic="",brand=""):
+    """Per-territory ranks based on generic Rx volume, then selected brand Rx.
+
+    Generic Rx share = doctor generic distinct Rx / doctor's all distinct Rx.
+    Selected Brand Rx share = doctor target brand Rx / doctor generic Rx.
+    Competitor Rx share = doctor generic Rx featuring non-Beximco company /
+                          doctor generic distinct Rx.
+    No generic selection: do not manufacture meaningful share columns.
+    """
+    if not generic:
+        return []
+    if not has_product_index(db):
+        raise ValueError("Re-import the Rx workbook to enable product shares.")
+    base=["division=?"]
+    args=[division]
+    for k,v in (("region",region),("ase",ase),("territory",territory)):
+        if v:base.append(k+"=?");args.append(v)
+    wh=" AND ".join(base)
+    sql="""WITH per_rx AS (
+      SELECT region,ase,territory,dr_code,rx_key,
+        max(dr_name) AS dr_name,max(specialty) AS specialty,
+        max(CASE WHEN generic=? THEN 1 ELSE 0 END) AS has_generic,
+        max(CASE WHEN generic=? AND brand=? THEN 1 ELSE 0 END) AS has_brand,
+        max(CASE WHEN generic=? AND trim(coalesce(company,''))<>'' AND
+          regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
+          THEN 1 ELSE 0 END) AS has_competitor
+      FROM rx_items WHERE """+wh+"""
+      GROUP BY region,ase,territory,dr_code,rx_key
+    ), doctor AS (
+      SELECT region,ase,territory,dr_code,max(dr_name) dr_name,max(specialty) specialty,
+        count(*) AS all_rx,sum(has_generic) AS generic_rx,
+        sum(has_brand) AS brand_rx,sum(has_competitor) AS competitor_rx
+      FROM per_rx GROUP BY 1,2,3,4 HAVING sum(has_generic)>0
+    ), ordered AS (
+      SELECT *,
+        round(100.0*generic_rx/nullif(all_rx,0),1) AS generic_share,
+        CASE WHEN ? THEN round(100.0*brand_rx/nullif(generic_rx,0),1) END AS brand_share,
+        round(100.0*competitor_rx/nullif(generic_rx,0),1) AS competitor_share,
+        row_number() over(partition by region,ase,territory
+            order by generic_rx DESC, brand_rx DESC, competitor_rx DESC,dr_code) AS place
+      FROM doctor
+    )
+    SELECT region,ase,territory,place,dr_code,dr_name,specialty,generic_rx,
+      brand_rx,competitor_rx,generic_share,brand_share,competitor_share
+    FROM ordered WHERE place<=?
+    ORDER BY region,ase,territory,place"""
+    bind=[generic,generic,brand or "\0",generic]+args+[bool(brand),max(1,min(20,int(top_n)))]
+    return db.execute(sql,bind).fetchall()
+
+
+def generic_scope_summary(db,division,generic,region="",ase="",territory="",brand=""):
+    """Summaries across the chosen scope; shares have distinct Rx denominators."""
+    if not generic:return None
+    where=["division=?"];args=[division]
+    for k,v in (("region",region),("ase",ase),("territory",territory)):
+        if v:where.append(k+"=?");args.append(v)
+    total=db.execute("SELECT count(DISTINCT rx_key) FROM rx_items WHERE "+
+                     " AND ".join(where),args).fetchone()[0]
+    detail=generic_rx_shares(db,division,generic,region,ase,territory,brand)
+    detail["all_rx"]=int(total)
+    detail["generic_share"]=round(100*detail["total_rx"]/total,1) if total else None
+    return detail
+
+
+def regional_competitor_shares(db,division,generic,region="",limit_per_region=25):
+    """Competitor Rx ranking scoped by region ONLY, never ASE or territory.
+
+    With 'All regions' selected, each returned row explicitly identifies its
+    regional denominator, avoiding comparisons against national totals.
+    """
+    if not generic:return []
+    if not has_product_index(db):return []
+    fields={r[1] for r in db.execute("PRAGMA table_info('rx_items')").fetchall()}
+    if "company" not in fields:raise ValueError("Re-import data to index Company Name")
+    where=["division=?","generic=?"];args=[division,generic]
+    if region:where.append("region=?");args.append(region)
+    sql="""WITH scoped AS (
+      SELECT region,brand,company,rx_key FROM rx_items WHERE """+" AND ".join(where)+"""
+    ), totals AS (
+      SELECT region,count(DISTINCT rx_key) generic_rx FROM scoped GROUP BY region
+    ), competitor AS (
+      SELECT region,brand,count(DISTINCT rx_key) brand_rx
+      FROM scoped WHERE trim(coalesce(brand,''))<>'' AND
+        trim(coalesce(company,''))<>'' AND
+        regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
+      GROUP BY region,brand
+    ), ranked AS (
+      SELECT c.region,c.brand,c.brand_rx,t.generic_rx,
+        round(100.0*c.brand_rx/nullif(t.generic_rx,0),1) share,
+        row_number() over(partition by c.region ORDER BY c.brand_rx DESC,c.brand) position
+      FROM competitor c JOIN totals t ON c.region=t.region
+    )
+    SELECT region,brand,brand_rx,generic_rx,share
+    FROM ranked WHERE position<=? ORDER BY region,brand_rx DESC,brand"""
+    return db.execute(sql,args+[max(1,min(100,int(limit_per_region)))]).fetchall()
