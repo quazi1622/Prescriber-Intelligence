@@ -112,6 +112,55 @@ class ProductReportTests(unittest.TestCase):
             generic="Azithromycin",brand="Azithrocin")
         self.assertEqual(len(local),2)
 
+    def test_mail_top_n_is_per_territory_not_region(self):
+        # Three doctor codes in one region, distributed across two MPEs.
+        self.db.execute("""INSERT INTO rx_items VALUES
+            ('ACD','T1','T20','T21','D3','Dr Gamma','GP','Az',
+             'Azithromycin','6','Aristopharma')""")
+        one=html_report.build_region_report(
+            self.db,"ACD","T1",top_n=1,brand="Azithrocin",
+            generic="Azithromycin")
+        self.assertEqual(one["top_n"],1)
+        self.assertEqual(one["territory_top_rows"],2)
+        self.assertIn("Top 1 prescribers in each territory",one["html"])
+        self.assertIn("Regional competitor-wise Rx share",one["html"])
+        self.assertIn("Aristopharma",one["html"])
+        two=html_report.build_region_report(
+            self.db,"ACD","T1",top_n=2,brand="Azithrocin",
+            generic="Azithromycin")
+        self.assertEqual(two["territory_top_rows"],3)
+        self.assertEqual(two["top_n"],2)
+
+    def test_opportunities_require_competitor_and_no_target(self):
+        self.db.execute("""INSERT INTO rx_items VALUES
+            ('ACD','T1','T10','T11','D3','Dr Other','GP','Unknown',
+             'Azithromycin','6',NULL)""")
+        report=html_report.build_region_report(
+            self.db,"ACD","T1",top_n=2,brand="Azithrocin",
+            generic="Azithromycin")
+        self.assertEqual(report["opportunities_total"],1)
+        self.assertEqual(report["opportunities_shown"],1)
+        self.assertIn("Showing 1 of 1",report["html"])
+        self.assertIn("Dr Beta",report["html"])
+        self.assertNotIn("Dr Other",report["html"])
+
+    def test_mobile_html_breakpoint_and_unsent_metadata(self):
+        out=core.generate_drafts(self.db,self.root/"mobile_drafts",top_n=1,
+            brand="Azithrocin",generic="Azithromycin",sender="sender@example.com")
+        self.assertEqual(out[0][1],"REVIEW")
+        msg=BytesParser(policy=policy.default).parsebytes(
+            (self.root/"mobile_drafts"/"ACD_T1_Top_1.eml").read_bytes())
+        self.assertEqual(msg["From"],"sender@example.com")
+        self.assertEqual(msg["X-Unsent"],"1")
+        self.assertIsNotNone(msg["Date"])
+        self.assertIsNotNone(msg["Message-ID"])
+        self.assertEqual(list(msg.iter_attachments()),[])
+        content=msg.get_body(preferencelist=("html",)).get_content()
+        self.assertIn("@media only screen",content)
+        self.assertIn("data-label",content)
+        self.assertIn("font-family:Tahoma",content)
+        self.assertIn("Top 1 prescribers in each territory",content)
+
     def test_formatted_html_email_without_csv_attachment(self):
         report=html_report.build_region_report(
             self.db,"ACD","T1",top_n=5,brand="Azithrocin",
