@@ -189,6 +189,15 @@ class ProductReportTests(unittest.TestCase):
         self.assertIn("zsi@example.com",email["Cc"])
         self.assertEqual(list(email.iter_attachments()),[])
         self.assertIn("text/html",[p.get_content_type() for p in email.walk()])
+        raw=(self.root/"drafts"/"ACD_T1_Top_5.eml").read_bytes()
+        self.assertIn(b"Content-Transfer-Encoding: 8bit",raw)
+        self.assertIn(b'<html lang="en"',raw)
+        self.assertNotIn(b'lang=3D"en"',raw)
+        self.assertIn(b"\r\n",raw)
+        html_part=email.get_body(preferencelist=("html",))
+        self.assertEqual(html_part.get_content().count("<td"),
+                         html_part.get_content().count("</td>"))
+        self.assertIn("font-family:Tahoma",html_part.get_content())
 
 if __name__=="__main__":
     unittest.main()
