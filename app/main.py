@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QObject, Signal
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 from routing import import_hierarchy
-from product_analysis import product_choices,filtered_rankings,has_product_index,generic_rx_shares,competitor_brand_shares
+from product_analysis import product_choices,filtered_rankings,has_product_index,generic_rx_shares,competitor_brand_shares,prescriber_share_rankings,generic_scope_summary,regional_competitor_shares
 
 CSS="""
 QWidget{background:#071b17;color:#d9f7e7;font:12px 'Segoe UI'}
@@ -66,29 +66,29 @@ class Window(QMainWindow):
         a.addLayout(stats)
         share_stats=QHBoxLayout()
         self.share_metrics=[]
-        for _ in range(4):
+        for _ in range(3):
             label=QLabel("Select a Generic to compare shares")
             label.setObjectName("metric")
             share_stats.addWidget(label)
             self.share_metrics.append(label)
         a.addLayout(share_stats)
         self.competitors=QTableWidget()
-        self.competitors.setColumnCount(3)
+        self.competitors.setColumnCount(5)
         self.competitors.setHorizontalHeaderLabels(
-            ["Competitor brand","Observed Rx","Generic Rx share"])
+            ["RSE / Region","Competitor brand","Observed Rx","Region generic Rx","Regional Rx share"])
         self.competitors.setMaximumHeight(190)
         self.competitors.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        a.addWidget(QLabel("COMPETITOR BRAND SHARE — SELECTED GENERIC"))
+        a.addWidget(QLabel("COMPETITOR BRAND SHARE — RSE REGIONAL LEVEL (INDEPENDENT OF ASE / MPE)"))
         a.addWidget(self.competitors)
         actions=QHBoxLayout()
         refresh=QPushButton("↻  REFRESH");refresh.clicked.connect(self.refresh);actions.addWidget(refresh)
         export=QPushButton("↓  EXPORT CSV");export.clicked.connect(self.export);actions.addWidget(export)
         actions.addStretch();a.addLayout(actions)
-        self.table=QTableWidget();self.table.setColumnCount(11)
-        self.table.setHorizontalHeaderLabels(["RSE","ASE","Territory","#","Doctor Code","Prescriber","Specialty","Rx Count","Product Rows","Address","APP %"])
+        self.table=QTableWidget();self.table.setColumnCount(13)
+        self.table.setHorizontalHeaderLabels(["RSE","ASE","Territory","#","Doctor Code","Prescriber","Specialty","Generic Rx","Azithrocin Rx","Competitor Rx","Generic Rx Share","Azithrocin Rx Share","Competitor Rx Share"])
         self.table.setAlternatingRowColors(True);self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.table.setColumnWidth(5,245);self.table.setColumnWidth(9,310);a.addWidget(self.table)
+        self.table.setColumnWidth(5,245);self.table.setColumnWidth(6,150);a.addWidget(self.table)
         mail=QWidget();self.tabs.addTab(mail,"✉  EMAIL DRAFTS")
         m=QVBoxLayout(mail)
         m.addWidget(QLabel("ACD: RSE TO  •  ASE + ZSI CC  •  MANUAL REVIEW REQUIRED"))
@@ -158,53 +158,69 @@ class Window(QMainWindow):
         except Exception as e:self.error(str(e))
     def refresh(self,*args):
         try:
-            self.rows=(filtered_rankings(self.db,self.division.currentText(),self.top.value(),
-                self.selected(self.region),self.selected(self.ase),self.selected(self.territory),
-                self.selected(self.brand),self.selected(self.generic))
-                if has_product_index(self.db) else
-                [tuple(r)+(None,) for r in ranking(self.db,self.division.currentText(),
-                 self.top.value(),self.selected(self.region),self.selected(self.ase),self.selected(self.territory))])
-            self.table.setRowCount(len(self.rows))
-            for i,row in enumerate(self.rows):
-                for j,v in enumerate(row):
-                    self.table.setItem(i,j,QTableWidgetItem(str(v if v is not None else "")))
-            self.metrics[0].setText(f"{len(self.rows):,}   RANKED PRESCRIBERS")
-            self.metrics[1].setText(f"{len({(r[0],r[1],r[2]) for r in self.rows}):,}   TERRITORIES")
-            self.metrics[2].setText(f"{sum(int(r[7]) for r in self.rows):,}   PRESCRIPTIONS")
+            division=self.division.currentText()
+            region=self.selected(self.region)
+            ase=self.selected(self.ase)
+            territory=self.selected(self.territory)
             generic=self.selected(self.generic)
+            brand=self.selected(self.brand)
             if generic and has_product_index(self.db):
-                share=generic_rx_shares(self.db,self.division.currentText(),generic,
-                    region=self.selected(self.region),ase=self.selected(self.ase),
-                    territory=self.selected(self.territory),brand=self.selected(self.brand))
-                def format_share(value):
+                self.rows=prescriber_share_rankings(
+                    self.db,division,self.top.value(),region,ase,territory,generic,brand)
+            else:
+                self.rows=[]
+            self.table.setRowCount(len(self.rows))
+            for i,record in enumerate(self.rows):
+                for j,value in enumerate(record):
+                    if j>=10:
+                        display="—" if value is None else f"{value:.1f}%"
+                    else:
+                        display=str(value if value is not None else "")
+                    self.table.setItem(i,j,QTableWidgetItem(display))
+            self.metrics[0].setText(f"{len(self.rows):,}   RANKED PRESCRIBERS")
+            self.metrics[1].setText(
+                f"{len({(r[0],r[1],r[2]) for r in self.rows}):,}   TERRITORIES")
+            self.metrics[2].setText(
+                f"{sum(int(r[7]) for r in self.rows):,}   GENERIC Rx (RANKED)")
+            if generic:
+                share=generic_scope_summary(
+                    self.db,division,generic,region,ase,territory,brand)
+                def form(value):
                     return "—" if value is None else f"{value:.1f}%"
                 self.share_metrics[0].setText(
-                    format_share(share["beximco_share"])+"   BEXIMCO BRAND Rx SHARE")
+                    form(share["generic_share"])+"   GENERIC Rx SHARE")
                 self.share_metrics[1].setText(
-                    format_share(share["competitor_share"])+"   COMPETITOR Rx SHARE")
+                    form(share["brand_share"])+"   "+(brand or "SELECT BRAND")+" Rx SHARE")
                 self.share_metrics[2].setText(
-                    format_share(share["unclassified_share"])+"   UNCLASSIFIED COMPANY")
-                self.share_metrics[3].setText(
-                    f'{share["overlap_rx"]:,}'+"   OVERLAPPING Rx")
-                competitor_rows=competitor_brand_shares(self.db,self.division.currentText(),
-                    generic,region=self.selected(self.region),ase=self.selected(self.ase),
-                    territory=self.selected(self.territory))
-                self.competitors.setRowCount(len(competitor_rows))
-                for i,row in enumerate(competitor_rows):
-                    for j,v in enumerate(row):
-                        formatted=f"{v:.1f}%" if j==2 else str(v)
-                        self.competitors.setItem(i,j,QTableWidgetItem(formatted))
+                    form(share["competitor_share"])+"   COMPETITOR Rx SHARE")
+                # RSE is the only geography used in this query.
+                regional=regional_competitor_shares(
+                    self.db,division,generic,region)
+                self.competitors.setRowCount(len(regional))
+                for i,record in enumerate(regional):
+                    for j,value in enumerate(record):
+                        display=f"{value:.1f}%" if j==4 else str(value)
+                        self.competitors.setItem(i,j,QTableWidgetItem(display))
             else:
                 for label in self.share_metrics:
-                    label.setText("Select a Generic to compare Rx shares")
+                    label.setText("Select a Generic to compute Rx shares")
                 self.competitors.setRowCount(0)
-        except Exception as e:self.error(str(e))
+        except Exception as e:
+            self.error(str(e))
     def error(self,message):
         QMessageBox.critical(self,"Prescriber Intelligence",message)
     def export(self):
         if not self.rows:return self.error("Import the prescription workbook first.")
         path,_=QFileDialog.getSaveFileName(self,"Export ranking",str(DATA/"top_prescribers.csv"),"CSV (*.csv)")
-        if path:write_csv(self.rows,path)
+        if path:
+            import csv
+            with open(path,"w",newline="",encoding="utf-8-sig") as handle:
+                writer=csv.writer(handle)
+                writer.writerow(["RSE","ASE","Territory","Rank","Doctor Code","Prescriber",
+                    "Specialty","Generic Rx","Selected Brand Rx","Competitor Rx",
+                    "Generic Rx Share (%)","Selected Brand Rx Share (%)",
+                    "Competitor Rx Share (%)"])
+                writer.writerows(self.rows)
     def load_audit(self):
         rows=self.db.execute("SELECT region,rse_name,rse_email,ase_emails,zsi_email FROM recipients WHERE division='ACD' ORDER BY region").fetchall()
         self.auditlabel.setText(f"{len(rows)} ACD recipient groups loaded. Review missing addresses before sending.")
