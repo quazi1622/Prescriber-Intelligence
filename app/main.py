@@ -2,7 +2,7 @@
 import sys,threading,traceback
 from pathlib import Path
 from PySide6.QtCore import Qt, QObject, Signal
-from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView)
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView,QCompleter)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 from routing import import_hierarchy
 from product_analysis import product_choices,filtered_rankings,has_product_index,generic_rx_shares,competitor_brand_shares,prescriber_share_rankings,generic_scope_summary,regional_competitor_shares
@@ -22,6 +22,73 @@ QHeaderView::section{background:#20563d;color:#d4ffdf;padding:8px;border:0}
 QTabBar::tab{background:#113a2b;color:#bbdfca;padding:11px 20px}
 QTabBar::tab:selected{background:#2b7653;color:white}
 """
+
+class SearchableCombo(QComboBox):
+    """Editable dropdown with substring search and an explicit search button.
+
+    Filtering is client-side against the already loaded options. User typing
+    never becomes an SQL filter until a listed option is actually selected.
+    """
+    selectionCommitted=Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setEditable(True)
+        self.setInsertPolicy(QComboBox.NoInsert)
+        self.setMinimumWidth(145)
+        self._selected_value=""
+        completer=QCompleter(self.model(),self)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        self.setCompleter(completer)
+        self.activated.connect(self._accept_selection)
+        completer.activated[str].connect(self._completion_selected)
+        self.lineEdit().setPlaceholderText("Type to search…")
+        self.setToolTip("Type any part of an option, select a suggestion, or open the dropdown.")
+
+    def _completion_selected(self, value):
+        index=self.findText(value,Qt.MatchFixedString)
+        if index>=0:
+            self.setCurrentIndex(index)
+            self._accept_selection()
+
+    def _accept_selection(self, *args):
+        index=self.findText(self.currentText(),Qt.MatchFixedString)
+        if index<0:
+            # Invalid partial text is not applied to analytics.
+            prior=self.findText(self._selected_value,Qt.MatchFixedString)
+            if prior>=0:self.setCurrentIndex(prior)
+            return
+        value=self.itemText(index)
+        self._selected_value=value
+        self.selectionCommitted.emit()
+
+    def committed_text(self):
+        return self._selected_value
+
+    def commit_programmatic_selection(self):
+        self._selected_value=self.currentText()
+
+    def search_options(self):
+        typed=self.lineEdit().text().strip()
+        if typed==self._selected_value:
+            # Search button on an existing selection opens all alternatives.
+            self.lineEdit().clear()
+            typed=""
+        self.lineEdit().setFocus()
+        completer=self.completer()
+        completer.setCompletionPrefix(typed)
+        completer.complete()
+
+    def search_button(self):
+        button=QPushButton("⌕")
+        button.setFixedWidth(38)
+        button.setToolTip("Search available options (case-insensitive, partial name)")
+        button.clicked.connect(self.search_options)
+        return button
+
+
 class Signals(QObject):
     done=Signal(int)
     error=Signal(str)
@@ -45,18 +112,33 @@ class Window(QMainWindow):
         analytics=QWidget();self.tabs.addTab(analytics,"◈  ANALYTICS")
         a=QVBoxLayout(analytics)
         filters=QHBoxLayout()
-        self.division=QComboBox();self.division.addItems(["ACD","CCD"])
-        self.region=QComboBox();self.ase=QComboBox();self.territory=QComboBox()
+        self.division=SearchableCombo();self.division.addItems(["ACD","CCD"])
+        self.division.commit_programmatic_selection()
+        self.region=SearchableCombo();self.ase=SearchableCombo();self.territory=SearchableCombo()
         self.top=QSpinBox();self.top.setRange(1,20);self.top.setValue(10)
         for label,widget in [("DIVISION",self.division),("RSE / REGION",self.region),("ASE",self.ase),("TERRITORY",self.territory),("TOP N",self.top)]:
-            column=QVBoxLayout();column.addWidget(QLabel(label));column.addWidget(widget);filters.addLayout(column)
+            column=QVBoxLayout()
+            column.addWidget(QLabel(label))
+            if isinstance(widget,SearchableCombo):
+                controls=QHBoxLayout()
+                controls.setSpacing(3)
+                controls.addWidget(widget)
+                controls.addWidget(widget.search_button())
+                column.addLayout(controls)
+            else:
+                column.addWidget(widget)
+            filters.addLayout(column)
         a.addLayout(filters)
         product_filters=QHBoxLayout()
-        self.generic=QComboBox();self.brand=QComboBox()
+        self.generic=SearchableCombo();self.brand=SearchableCombo()
         for name,widget in [("GENERIC",self.generic),("BRAND",self.brand)]:
             group=QVBoxLayout()
             group.addWidget(QLabel(name))
-            group.addWidget(widget)
+            controls=QHBoxLayout()
+            controls.setSpacing(3)
+            controls.addWidget(widget)
+            controls.addWidget(widget.search_button())
+            group.addLayout(controls)
             product_filters.addLayout(group)
         a.addLayout(product_filters)
         self.metrics=[]
@@ -120,19 +202,21 @@ class Window(QMainWindow):
         importbtn.clicked.connect(self.import_selected);d.addWidget(importbtn)
         self.progress=QProgressBar();d.addWidget(self.progress)
         self.log=QTextEdit();self.log.setReadOnly(True);self.log.setPlainText("Database: "+str(DB));d.addWidget(self.log)
-        self.division.currentTextChanged.connect(self.reset_filters)
-        self.region.currentTextChanged.connect(self.update_ase)
-        self.ase.currentTextChanged.connect(self.update_territory)
-        self.territory.currentTextChanged.connect(self.reset_products)
-        self.generic.currentTextChanged.connect(self.update_brand)
-        self.brand.currentTextChanged.connect(self.refresh)
+        self.division.selectionCommitted.connect(self.reset_filters)
+        self.region.selectionCommitted.connect(self.update_ase)
+        self.ase.selectionCommitted.connect(self.update_territory)
+        self.territory.selectionCommitted.connect(self.reset_products)
+        self.generic.selectionCommitted.connect(self.update_brand)
+        self.brand.selectionCommitted.connect(self.refresh)
         self.top.valueChanged.connect(self.refresh)
         self.reset_filters();self.load_audit()
     def selected(self,c):
-        return "" if c.currentText() in ("All","") else c.currentText()
+        value=c.committed_text() if isinstance(c,SearchableCombo) else c.currentText()
+        return "" if value in ("All","") else value
     def fill(self,c,values):
         c.blockSignals(True);old=c.currentText();c.clear();c.addItem("All");c.addItems(values)
         if old in values:c.setCurrentText(old)
+        if isinstance(c,SearchableCombo):c.commit_programmatic_selection()
         c.blockSignals(False)
     def reset_filters(self,*args):
         self.fill(self.region,choices(self.db,self.division.currentText(),"region"))
@@ -158,12 +242,14 @@ class Window(QMainWindow):
             if (self.selected(self.generic).casefold()=="azithromycin"
                     and not self.selected(self.brand)):
                 match=next((b for b in brands if b.casefold()=="azithrocin"),None)
-                if match:self.brand.setCurrentText(match)
+                if match:
+                    self.brand.setCurrentText(match)
+                    self.brand.commit_programmatic_selection()
             self.refresh()
         except Exception as e:self.error(str(e))
     def refresh(self,*args):
         try:
-            division=self.division.currentText()
+            division=self.division.committed_text()
             region=self.selected(self.region)
             ase=self.selected(self.ase)
             territory=self.selected(self.territory)
