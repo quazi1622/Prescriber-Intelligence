@@ -60,3 +60,10 @@ The main KPI cards aggregate these shares over the selected division, region, AS
 **Competitor brand share table:** This is **always grouped at the RSE regional level** within the selected generic. Choosing an ASE or MPE affects the doctor-level table and KPI cards, but **does not change the competitor-brand table**. If all RSE regions are selected, rows include the RSE code and each brand's **regional** generic-Rx denominator. Rows are sorted by observed competitor-brand Rx descending *within each region* (equivalent to share descending because the region's denominator is fixed).
 
 Shares reflect observed Rx presence and can overlap if one Rx lists multiple brands/manufacturers. Empty Company Name is unclassified, not assumed to be a competitor. A single prescription must have a reliable unique Rx identifier. For the new ranking, the same Rx key is deduplicated per doctor/territory. Data remain local and are not uploaded to GitHub.
+
+
+## Searchable dropdowns in Analytics
+
+Every Analytics selection list—Division, RSE/Region, ASE, Territory, Generic and Brand—now includes an **editable search field, dropdown arrow and an adjacent ⌕ search button**. Type any part of an option (matching is case-insensitive), then select a suggestion, or use the arrow for the full list. The search button displays matching options; if the current selection hasn't been edited, it opens all alternatives. The Top N control remains numeric (1–20), rather than a text dropdown.
+
+Partial search text is **not** accepted as a filter: the prior committed selection remains in force until a known option is chosen. Dependent filters (Region → ASE → Territory; Generic → Brand) are repopulated from imported local data, and the app retains any valid previous selection. This is client-side filtering over already loaded choice lists; no extra backend load occurs on every keystroke.
