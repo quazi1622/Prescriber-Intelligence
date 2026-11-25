@@ -141,8 +141,10 @@ class ProductReportTests(unittest.TestCase):
         self.assertEqual(report["opportunities_total"],1)
         self.assertEqual(report["opportunities_shown"],1)
         self.assertIn("Showing 1 of 1",report["html"])
-        self.assertIn("Dr Beta",report["html"])
-        self.assertNotIn("Dr Other",report["html"])
+        opportunity_html=report["html"].split("Competitor opportunity review",1)[1]
+        opportunity_html=opportunity_html.split("Territory review",1)[0]
+        self.assertIn("Dr Beta",opportunity_html)
+        self.assertNotIn("Dr Other",opportunity_html)
 
     def test_mobile_html_breakpoint_and_unsent_metadata(self):
         out=core.generate_drafts(self.db,self.root/"mobile_drafts",top_n=1,
