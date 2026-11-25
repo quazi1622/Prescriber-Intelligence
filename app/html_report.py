@@ -207,19 +207,23 @@ def build_region_report(db,division,region,top_n=10,brand="",generic="",recipien
           (str(r[3])+" / "+str(r[4]) if brand else "N/A"),
           r[5]] for r in territory_rows]
     if shares:
+        all_region_rx=db.execute(
+            "SELECT count(DISTINCT rx_key) FROM rx_items WHERE division=? AND region=?",
+            [division,region]).fetchone()[0]
+        generic_scope_share=pct(shares["total_rx"],all_region_rx)
         kpi_items=[
-            (num(total),"Generic Rx"),
-            (num(prescribers),"Prescribers"),
-            (pct(shares["beximco_rx"],shares["total_rx"]),"Beximco Rx share"),
+            (generic_scope_share,"Generic Rx share"),
+            (pct(shares["brand_rx"],shares["total_rx"]), (brand or "Selected brand")+" Rx share"),
             (pct(shares["competitor_rx"],shares["total_rx"]),"Competitor Rx share"),
+            (num(total),"Generic Rx"),
         ]
         summary_note=(
             "Company classification uses the imported manufacturer field. "
             +str(shares["unclassified_rx"])+" Rx have unclassified manufacturer records; "
             +str(shares["overlap_rx"])+" Rx contain both Beximco and competitor brands.")
     else:
-        kpi_items=[(num(total),"Observed Rx"),(num(prescribers),"Prescribers"),
-                   ("N/A","Beximco Rx share"),("N/A","Competitor Rx share")]
+        kpi_items=[("N/A","Generic Rx share"),("N/A","Selected brand Rx share"),
+                   ("N/A","Competitor Rx share"),(num(total),"Observed Rx")]
         summary_note="Select a single generic to calculate comparable manufacturer shares."
     method_note=(
         "All results reflect the imported Rx sample. Apparent Prescription Preference is a "
