@@ -9,10 +9,10 @@ from string import Template
 def esc(value):
     return escape(str(value if value is not None else ""),quote=True)
 
-def heading(title,subtitle=""):
+def heading(title,subtitle="",color="#155670"):
     return ('<tr><td style="padding:19px 24px 8px;">'
       '<p style="margin:0;font-family:Tahoma,sans-serif;font-size:17px;line-height:22px;'
-      'font-weight:bold;color:#155670;">'+esc(title)+'</p>'
+      'font-weight:bold;color:'+color+';">'+esc(title)+'</p>'
       +('<p style="margin:5px 0 0;font-family:Tahoma,sans-serif;font-size:11px;line-height:16px;color:#667784;">'+esc(subtitle)+'</p>' if subtitle else '')
       +'</td></tr>')
 
@@ -44,8 +44,8 @@ def data_table(headers,rows,widths=None):
 
 def kpis(items):
     """Four static-width metrics, including missing data represented as N/A."""
-    backgrounds=["#f5f7f9","#f5f7f9","#e4f4e9","#fff0f0"]
-    colors=["#24313e","#24313e","#167144","#a72c3e"]
+    backgrounds=["#f5f7f9","#e4f4e9","#fff0f0","#f5f7f9"]
+    colors=["#24313e","#167144","#a72c3e","#24313e"]
     cells=[]
     for i,(value,label) in enumerate(items):
         cells.append('<td class="kpi-cell" width="25%" valign="top" align="center" bgcolor="'+backgrounds[i]+
@@ -87,7 +87,7 @@ OUTLOOK_TEMPLATE=Template("""<!DOCTYPE html>
   .responsive-data td.data-cell {display:block !important;width:100% !important;box-sizing:border-box !important;}
   .responsive-data tr.data-row {margin:0 0 12px !important;border:1px solid #d6e0e4 !important;}
   .responsive-data td.table-heading {display:none !important;}
-  .responsive-data td.data-cell {padding:7px 10px !important;border:0 !important;border-bottom:1px solid #e1e8ec !important;}
+  .responsive-data td.data-cell {padding:9px 12px !important;border:0 !important;border-bottom:1px solid #e1e8ec !important;font-size:13px !important;line-height:19px !important;}
   .responsive-data td.data-cell:before {content:attr(data-label);display:block !important;font:700 10px Tahoma,sans-serif !important;color:#526775 !important;padding-bottom:3px !important;text-transform:uppercase !important;}
 }
 </style>
@@ -129,7 +129,8 @@ $METHOD_SECTION
 
 def render_report(*,division,period,region,generic,scope,recipient,intro,kpi_items,
     summary_note,action_lines,top_rows,brand_rows,opportunity_rows,territory_rows,method_note,
-    territory_top_rows=None,competitor_rows=None,top_n=10,opportunity_note=""):
+    territory_top_rows=None,competitor_rows=None,top_n=10,opportunity_note="",
+    brand_note="",competitor_note=""):
     top_section=heading("Top observed prescribers")+data_table(
         ["Rank","Prescriber / Specialty","ASE / MPE","Rx / brand mix"],
         top_rows,[9,36,17,38])
@@ -139,15 +140,15 @@ def render_report(*,division,period,region,generic,scope,recipient,intro,kpi_ite
     )+data_table(
         ["ASE / MPE","Rank","Prescriber / specialty","Generic Rx / target Rx"],
         territory_top_rows or [],[18,9,42,31])
-    brand_section=heading("Observed brand mix")+data_table(
+    brand_section=heading("Observed brand mix",brand_note)+data_table(
         ["Brand","Observed Rx","% of generic scope"],
         brand_rows,[50,24,26])
     competitor_section=(heading("Regional competitor-wise Rx share",
-        "Shares use distinct generic Rx within this RSE region as denominator.")
+        competitor_note or "Shares use distinct generic Rx within this RSE region as denominator.")
         +data_table(["Competitor brand","Company","Distinct Rx","Regional share"],
         competitor_rows or [],[29,31,18,22])) if competitor_rows is not None else ""
     opportunity_section=(heading("Competitor opportunity review",
-        opportunity_note or "Confirmed competitor Rx with no observed target-brand Rx; survey-based.")
+        opportunity_note or "Confirmed competitor Rx with no observed target-brand Rx; survey-based.",color="#9b3045")
         +data_table(["ASE / MPE","Prescriber","Competitor brands","Rx"],
         opportunity_rows,[19,35,32,14])) if opportunity_rows else ""
     territory_section=heading("Territory review")+data_table(
