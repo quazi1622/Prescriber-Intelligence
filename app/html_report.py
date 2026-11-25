@@ -149,6 +149,7 @@ def build_region_report(db, division, region, top_n=10, brand="", generic="",
     # Manufacturer-specific competitor ranking is ALWAYS regional, and
     # does not inherit ASE or MPE filters from the desktop view.
     competitor_rows = []
+    competitor_count = 0
     if generic:
         entries = db.execute(
             """SELECT brand,company,count(DISTINCT rx_key) AS cnt
@@ -161,8 +162,9 @@ def build_region_report(db, division, region, top_n=10, brand="", generic="",
         ).fetchall()
         competitor_rows = [
             [b,c,num(count),pct(count,total)]
-            for b,c,count in entries
+            for b,c,count in entries[:20]
         ]
+        competitor_count = len(entries)
 
     # Distinguish no target-brand Rx from confirmed competitor Rx.
     # Both criteria must be true for a competitor opportunity.
@@ -272,7 +274,16 @@ def build_region_report(db, division, region, top_n=10, brand="", generic="",
             [b,num(c),pct(c,total)] for b,c in brand_counts[:12]
         ],competitor_rows=competitor_rows,
         opportunity_rows=opportunity_rows,territory_rows=territory_rows,
-        method_note=method_note,top_n=n,opportunity_note=opportunity_note
+        method_note=method_note,top_n=n,opportunity_note=opportunity_note,
+        brand_note=(
+            f"Showing the top {min(12,len(brand_counts))} of "
+            f"{len(brand_counts)} observed brands."
+        ),
+        competitor_note=(
+            f"Regional denominator: {num(total)} distinct generic Rx. "
+            f"Showing the top {len(competitor_rows)} of "
+            f"{competitor_count} competitor brand/manufacturer combinations."
+        ) if generic else ""
     )
     text=(
         f"Regional Rx review: {region}\nPeriod: {period}\nScope: {scope}\n"
