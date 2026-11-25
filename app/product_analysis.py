@@ -279,9 +279,9 @@ def regional_competitor_shares(db,division,generic,region="",limit_per_region=25
     ), ranked AS (
       SELECT c.region,c.brand,c.brand_rx,t.generic_rx,
         round(100.0*c.brand_rx/nullif(t.generic_rx,0),1) AS regional_rx_share,
-        row_number() over(partition by c.region ORDER BY c.brand_rx DESC,c.brand) position
+        row_number() over(partition by c.region ORDER BY c.brand_rx DESC,c.brand) AS region_rank
       FROM competitor c JOIN totals t ON c.region=t.region
     )
     SELECT region,brand,brand_rx,generic_rx,regional_rx_share
-    FROM ranked WHERE position<=? ORDER BY region,brand_rx DESC,brand"""
+    FROM ranked WHERE region_rank<=? ORDER BY region,brand_rx DESC,brand"""
     return db.execute(sql,args+[max(1,min(100,int(limit_per_region)))]).fetchall()
