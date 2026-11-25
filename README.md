@@ -67,3 +67,14 @@ Shares reflect observed Rx presence and can overlap if one Rx lists multiple bra
 Every Analytics selection list—Division, RSE/Region, ASE, Territory, Generic and Brand—now includes an **editable search field, dropdown arrow and an adjacent ⌕ search button**. Type any part of an option (matching is case-insensitive), then select a suggestion, or use the arrow for the full list. The search button displays matching options; if the current selection hasn't been edited, it opens all alternatives. The Top N control remains numeric (1–20), rather than a text dropdown.
 
 Partial search text is **not** accepted as a filter: the prior committed selection remains in force until a known option is chosen. Dependent filters (Region → ASE → Territory; Generic → Brand) are repopulated from imported local data, and the app retains any valid previous selection. This is client-side filtering over already loaded choice lists; no extra backend load occurs on every keystroke.
+
+
+## Outlook + mobile email drafts (latest)
+
+The **Email Drafts** tab now has an independent **Top N prescribers per MPE** numeric selector (1–20; default 10), separate from Analytics Top N. Every regional HTML email contains **up to N ranked doctors for each ASE/MPE territory**—not merely N doctors for the entire region—and adds a concise regional preview.
+
+Each regional email includes the **regional competitor-wise brand and manufacturer breakdown** (distinct Rx share with that RSE's generic Rx as the denominator), top 12 observed brands, top 20 competitor brand/manufacturer combinations, and an opportunity section showing **only doctors with confirmed competitor-manufacturer Rx AND zero observed selected-brand Rx**. Top-N and abbreviated sections explicitly disclose their limits and total qualifying entries. Generic Rx share also discloses the all-product denominator. Shares represent observed samples, not national market share.
+
+The 640 px desktop design keeps Outlook's Word-rendered table fallback with Tahoma and inline CSS. Email clients that support mobile media queries render a fluid-width report, 2-column KPI tiles and vertically stacked, labeled data rows on narrow screens. **Classic desktop Outlook does not support every responsive CSS feature**, and actual rendering still requires testing in classic Outlook, new Outlook, and Outlook Mobile.
+
+The generator writes local, unsent HTML + text `.eml` files, **no CSV attachment**. Emails include draft metadata (`X-Unsent`, `Date`, and `Message-ID`). A **Sender Email (optional)** control sets `From` only to an address supplied by the operator; the app does not invent or spoof an address. Addresses and personal reports remain local. Regenerate drafts after installing a successful new Windows build to see the changes.
