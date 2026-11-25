@@ -2,6 +2,7 @@
 import csv, io, re, sys, shutil, uuid
 from pathlib import Path
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 import duckdb
 from openpyxl import load_workbook
 try:
@@ -174,7 +175,7 @@ def write_csv(rows,path):
     with open(path,"w",newline="",encoding="utf-8-sig") as f:
         w=csv.writer(f);w.writerow(HEADERS);w.writerows(rows)
 
-def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD"):
+def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD",sender=""):
     """Create unsent email drafts with HTML body, no CSV attachment.
 
     Blocking rules never put recipients or prescriber data in invalid drafts.
@@ -182,6 +183,9 @@ def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD"):
     """
     if division!="ACD":
         raise ValueError("CCD routing has not yet been validated; only ACD drafts are supported.")
+    top_n=max(1,min(20,int(top_n)))
+    if sender and not re.fullmatch(r"[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+",sender):
+        raise ValueError("Sender address is invalid. Enter a valid email or leave it blank.")
     outdir=Path(outdir);outdir.mkdir(parents=True,exist_ok=True)
     manifest=[]
     for region,zone,name,email,ases,zname,zemail,status in db.execute(
@@ -200,7 +204,11 @@ def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD"):
             report=build_region_report(db,"ACD",region,top_n,brand,generic,name)
             if report["rx"]==0:permitted=False
         msg=EmailMessage()
-        msg["Subject"]=f"[DRAFT] ACD {region} — {brand or generic or 'Rx'} prescription review"
+        msg["X-Unsent"]="1"
+        msg["Date"]=formatdate(localtime=True)
+        msg["Message-ID"]=make_msgid(domain="prescriber-intelligence.local")
+        if sender:msg["From"]=sender
+        msg["Subject"]=f"[DRAFT] ACD {region} — {brand or generic or 'Rx'} prescription review · Top {top_n} / MPE"
         if permitted:
             msg["To"]=email
             if unique_cc:msg["Cc"]=", ".join(unique_cc)
@@ -212,7 +220,7 @@ def generate_drafts(db,outdir,top_n=10,brand="",generic="",division="ACD"):
                             +"Region: "+str(region)+"\n"
                             +"Reason: "+str(status or "Missing routing")+"\n"
                             +"Matching prescription data may also be unavailable.\n")
-        filename=f"ACD_{region}_Top_{max(1,min(20,int(top_n)))}.eml"
+        filename=f"ACD_{region}_Top_{top_n}.eml"
         (outdir/filename).write_bytes(msg.as_bytes())
         manifest.append([region,"REVIEW" if permitted else "BLOCKED",
                          report["rx"] if report else 0,filename,
