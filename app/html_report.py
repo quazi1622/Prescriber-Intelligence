@@ -1,246 +1,290 @@
-"""Outlook-compatible inline HTML Rx reports. All numbers come from local DuckDB."""
-from collections import defaultdict,Counter
-from html import escape
-from email.message import EmailMessage
-import re
-try:
-    from .product_analysis import generic_rx_shares, competitor_brand_shares
-except ImportError:
-    from product_analysis import generic_rx_shares, competitor_brand_shares
+"""Outlook and mobile-friendly regional Rx report from local DuckDB facts.
+
+Counts are distinct observed Rx identifiers and all manufacturer classification
+uses the imported Company Name. No source data leaves the local application.
+"""
+from collections import Counter, defaultdict
+
 try:
     from .outlook_layout import render_report
-    from .product_analysis import report_date_range
+    from .product_analysis import (
+        generic_rx_shares, prescriber_share_rankings, report_date_range
+    )
 except ImportError:
     from outlook_layout import render_report
-    from product_analysis import report_date_range
+    from product_analysis import (
+        generic_rx_shares, prescriber_share_rankings, report_date_range
+    )
 
-def safe(value):
-    return escape(str(value if value is not None else ""),quote=True)
 
 def num(value):
     return f"{int(value):,}"
 
-def pct(part,total):
-    return f"{100*part/total:.1f}%" if total else "—"
 
-def row_cells(values,header=False,highlight=False):
-    tag="th" if header else "td"
-    base=("background:#104f69;color:#ffffff;font-weight:bold;" if header else
-          "background:#def5e8;color:#165e43;font-weight:700;" if highlight else
-          "background:#ffffff;color:#263343;")
-    return "<tr>"+ "".join(
-        f'<{tag} style="{base}border:1px solid #d2d8dc;padding:8px 7px;vertical-align:top;font-size:12px;">{safe(v)}</{tag}>'
-        for v in values
-    )+"</tr>"
+def pct(part, total):
+    return f"{100 * part / total:.1f}%" if total else "—"
 
-def table(headers,records,highlight_col=None):
-    parts=['<table role="presentation" cellspacing="0" cellpadding="0" width="100%" style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;">']
-    parts.append(row_cells(headers,header=True))
-    for row in records:
-        if highlight_col is None:parts.append(row_cells(row))
-        else:
-            parts.append('<tr>')
-            for i,val in enumerate(row):
-                positive= i==highlight_col and str(val) not in ("0","0.0%","—","")
-                style=("background:#d9f5e4;color:#16673a;font-weight:bold;" if positive
-                      else "background:#ffe9ea;color:#9b2431;" if i==highlight_col
-                      else "background:#ffffff;color:#263343;")
-                parts.append(f'<td style="{style}border:1px solid #d2d8dc;padding:8px 7px;font-size:12px;">{safe(val)}</td>')
-            parts.append('</tr>')
-    return "".join(parts)+"</table>"
 
-def section(title,color="#155670"):
-    return f'<h2 style="font:700 18px Arial,sans-serif;color:{color};border-bottom:3px solid {color};padding-bottom:6px;margin:28px 0 12px;">{safe(title)}</h2>'
+def _company_is_competitor(company):
+    import re
+    normalized = re.sub(r"[^a-z0-9]", "", str(company or "").lower())
+    return bool(normalized and not normalized.startswith("beximco"))
 
-def build_region_report(db,division,region,top_n=10,brand="",generic="",recipient_name=""):
-    """Report a selected generic's observed Rx, comparing the selected brand.
 
-    If no generic is selected, use all observed Rx in the region; brand names
-    may appear across generics, so report scope labels disclose this.
-    Counts are distinct Rx identifiers, not product-line counts.
-    """
-    if not db.execute("SELECT count(*) FROM information_schema.tables WHERE table_name='rx_items'").fetchone()[0]:
+def build_region_report(db, division, region, top_n=10, brand="", generic="",
+                        recipient_name=""):
+    """Render every territory's Top N, regional competitors and true opportunities."""
+    n = max(1, min(20, int(top_n)))
+    if not db.execute(
+        "SELECT count(*) FROM information_schema.tables WHERE table_name='rx_items'"
+    ).fetchone()[0]:
         raise ValueError("Re-import Excel Rx data to create the Brand/Generic index.")
-    where=["division=?","region=?"]
-    args=[division,region]
-    if generic:where.append("generic=?");args.append(generic)
-    clause=" AND ".join(where)
-    # Each prescription is counted once at each observed brand; totals count
-    # unique Rx. Brand totals can sum above 100% for multi-brand prescriptions.
-    raw=db.execute("""SELECT ase,territory,dr_code,max(dr_name),max(specialty),brand,
-          count(DISTINCT rx_key) FROM rx_items WHERE """+clause+
-          " GROUP BY ase,territory,dr_code,brand",args).fetchall()
-    baseline=db.execute("""SELECT count(DISTINCT rx_key),
-          count(DISTINCT dr_code), count(DISTINCT territory)
-          FROM rx_items WHERE """+clause,args).fetchone()
-    total=int(baseline[0]);prescribers=int(baseline[1]);territories=int(baseline[2])
-    # Key each doctor by territory to prevent accidental cross-territory merges.
-    doctors={}
-    brands=Counter()
-    for ase,territory,code,name,specialty,b,rxc in raw:
-        key=(str(ase or ""),str(territory or ""),str(code or ""))
-        item=doctors.setdefault(key,{"name":name or "Unnamed prescriber",
-            "specialty":specialty or "—","brand_rx":Counter()})
-        item["brand_rx"][str(b or "Unspecified")]+=int(rxc)
-    counts=db.execute("""SELECT ase,territory,dr_code,
-          count(DISTINCT rx_key) AS total_rx
-          FROM rx_items WHERE """+clause+
-          " GROUP BY ase,territory,dr_code",args).fetchall()
-    doctor_totals={(str(a or ""),str(t or ""),str(c or "")):int(n)
-                   for a,t,c,n in counts}
-    territory_counts=db.execute(
-        "SELECT ase,territory,count(DISTINCT rx_key) FROM rx_items WHERE "
-        +clause+" GROUP BY ase,territory",args).fetchall()
-    territory_totals={(str(a or ""),str(t or "")):int(n)
-                      for a,t,n in territory_counts}
-    territory_target_totals={}
-    if brand:
-        counts=db.execute(
-            "SELECT ase,territory,count(DISTINCT rx_key) FROM rx_items WHERE "
-            +clause+" AND brand=? GROUP BY ase,territory",args+[brand]).fetchall()
-        territory_target_totals={(str(a or ""),str(t or "")):int(n)
-                                 for a,t,n in counts}
-    # Actual target Rx count uses DISTINCT keys; never sum brand rows as total.
-    if brand:
-        count_sql="SELECT count(DISTINCT rx_key) FROM rx_items WHERE "+clause+" AND brand=?"
-        target_rx=int(db.execute(count_sql,args+[brand]).fetchone()[0])
-    else:target_rx=0
-    brand_rows=db.execute("""SELECT brand,count(DISTINCT rx_key) AS n FROM rx_items
-        WHERE """+clause+" AND trim(coalesce(brand,''))<>'' GROUP BY brand ORDER BY n DESC,brand",args).fetchall()
-    for b,n in brand_rows:brands[str(b)]=int(n)
-    rank_items=[]
-    nonprescribers=[]
-    territory_data=defaultdict(list)
-    for (ase,terr,code),d in doctors.items():
-        # Total by doctor must not sum brand-specific counts due to overlap.
-        d_total=doctor_totals[(ase,terr,code)]
-        selected=d["brand_rx"].get(brand,0) if brand else 0
-        d["total"]=d_total;d["target"]=selected
-        d["app"]=pct(selected,d_total) if brand else "—"
-        detail=", ".join(f"{b} {c}" for b,c in d["brand_rx"].most_common(6))
-        item={"ase":ase,"terr":terr,"code":code,"detail":detail,**d}
-        rank_items.append(item)
-        territory_data[(ase,terr)].append(item)
-        if brand and selected==0 and d_total:nonprescribers.append(item)
-    rank_items.sort(key=lambda d:(-d["total"],d["code"]))
-    nonprescribers.sort(key=lambda d:(-d["total"],d["code"]))
-    top_n=max(1,min(20,int(top_n)))
-    main_rows=[[i+1,d["name"]+" ("+d["code"]+")",d["specialty"],
-                f'{d["ase"]} / {d["terr"]}',d["total"],d["detail"],
-                d["target"] if brand else "—",d["app"]]
-                for i,d in enumerate(rank_items[:top_n])]
-    brand_share=[[b,num(n),pct(n,total)] for b,n in brand_rows[:12]]
-    territory_rows=[]
-    for (ase,terr),items in sorted(territory_data.items()):
-        items.sort(key=lambda d:(-d["total"],d["code"]))
-        t_rx=territory_totals[(ase,terr)]
-        b_rx=territory_target_totals.get((ase,terr),0) if brand else 0
-        territory_rows.append([f"{ase} / {terr}",num(t_rx),num(len(items)),
-                               num(b_rx) if brand else "—",
-                               pct(b_rx,t_rx) if brand else "—",
-                               "; ".join(d["name"] for d in items[:3])])
-    non_rows=[[f'{d["ase"]} / {d["terr"]}',d["name"],d["specialty"],
-               d["total"],d["detail"]] for d in nonprescribers[:80]]
-    territory_top_rows=[]
-    for (ase,terr),items in sorted(territory_data.items()):
-        items=sorted(items,key=lambda d:(-d["total"],d["code"]))
-        for i,d in enumerate(items[:top_n],start=1):
-            territory_top_rows.append([f"{ase} / {terr}",i,
-                d["name"]+" ("+d["code"]+")",d["specialty"],d["total"],
-                d["detail"],d["target"] if brand else "—",d["app"]])
 
-    shares=generic_rx_shares(db,division,generic,region=region,brand=brand) if generic else None
-    competition=competitor_brand_shares(db,division,generic,region=region,limit=12) if shares else []
-    comparator=brand or "All observed brands"
-    survey=generic or "All generics"
-    scope=survey+" / "+comparator
-    badge=lambda value,label,accent=False:(
-       '<td width="25%" style="padding:6px;"><table role="presentation" width="100%" style="border:1px solid #d7dce0;background:'+
-       ("#e0f6e7" if accent else "#f7f8fa")+
-       ';"><tr><td style="text-align:center;padding:14px 4px;"><div style="font:bold 22px Arial;color:'+
-       ("#13814d" if accent else "#263342")+';">'+safe(value)+
-       '</div><div style="font:12px Arial;color:#485464;">'+safe(label)+'</div></td></tr></table></td>')
-    kpi='<table role="presentation" width="100%"><tr>'+badge(num(total),"Observed Rx")+badge(num(prescribers),"Prescribers")+badge(num(territories),"MPE territories")+badge(pct(target_rx,total) if brand else "—","Target brand share",bool(brand))+'</tr></table>'
-    manufacturer_section=""
-    if shares:
-        manufacturer_section=(
-            section("Beximco vs competitor Rx share within "+generic)
-            +'<table role="presentation" width="100%"><tr>'
-            +badge(pct(shares["beximco_rx"],shares["total_rx"]),"Beximco Rx share",True)
-            +badge(pct(shares["competitor_rx"],shares["total_rx"]),"Competitor Rx share")
-            +badge(pct(shares["unclassified_rx"],shares["total_rx"]),"Unclassified company")
-            +badge(num(shares["overlap_rx"]),"Shared Rx / overlap")+'</tr></table>'
-            +'<p style="color:#657381;font:12px Arial;line-height:1.5;">'
-             'All shares use the same distinct generic-prescription denominator. '
-             'A prescription featuring both manufacturers is included in both shares. '
-             'Beximco identification comes from Company Name; empty company values remain unclassified.'
-             '</p>'
-            +section("Leading competitor brands")
-            +table(["Competitor brand","Distinct Rx","Share of generic Rx"],
-                [[b,num(n),f"{share:.1f}%"] for b,n,share in competition])
+    clauses = ["division=?", "region=?"]
+    params = [division, region]
+    if generic:
+        clauses.append("generic=?")
+        params.append(generic)
+    where = " AND ".join(clauses)
+
+    region_row = db.execute(
+        "SELECT count(DISTINCT rx_key), count(DISTINCT dr_code), "
+        "count(DISTINCT territory) FROM rx_items WHERE " + where, params
+    ).fetchone()
+    total, prescriber_count, territory_count = map(int, region_row)
+    if not total:
+        return {"html": "", "text": "", "rx": 0, "prescribers": 0,
+                "target_rx": 0, "scope": generic or "All generics",
+                "territories": 0, "top_n": n}
+
+    brand_rows = db.execute(
+        "SELECT brand, count(DISTINCT rx_key) AS cnt FROM rx_items WHERE "
+        + where
+        + " AND trim(coalesce(brand,''))<>'' "
+          "GROUP BY brand ORDER BY cnt DESC, brand",
+        params
+    ).fetchall()
+    brand_counts = [(str(b), int(c)) for b,c in brand_rows]
+    selected_rx = int(db.execute(
+        "SELECT count(DISTINCT rx_key) FROM rx_items WHERE "
+        + where + " AND brand=?", params + [brand]
+    ).fetchone()[0]) if brand else 0
+
+    # Source index is already division- and territory-scoped. The ranking
+    # function restarts row_number within each RSE/ASE/MPE combination.
+    if generic:
+        ranked = prescriber_share_rankings(
+            db, division, n, region=region, generic=generic, brand=brand
         )
-    introductory=("In the imported survey, this region recorded "
-          +f"{num(total)} distinct prescriptions from {num(prescribers)} prescribers across {num(territories)} territories"
-          +(f". {brand} appeared in {num(target_rx)} of those prescriptions ({pct(target_rx,total)})." if brand else ".")
-          +" These are observed sample metrics, not national market shares.")
-    actions=["Review the observed brand mix with the relevant ASEs and validate local context before planning follow-up.",
-             "Use the ranked prescriber list and territory comparison to prioritize review of the sample data."]
-    if nonprescribers:
-        actions.append(f"{num(len(nonprescribers))} prescribers in this region had no recorded {brand} Rx within the selected reporting scope; investigate whether this reflects genuine opportunity or incomplete survey capture.")
-    if not generic:
-        actions.append("Select a Generic filter to obtain a like-for-like therapeutic-class brand comparison.")
-    table_style=lambda title,headers,rows,highlight=None: section(title)+(table(headers,rows,highlight) if rows else '<p style="color:#607080;">No matching records.</p>')
-    top=table_style(f"Top {top_n} observed prescribers",["Rank","Prescriber / Code","Specialty","ASE / MPE","Rx","Brands prescribed",comparator+" Rx","APP"],main_rows,6 if brand else None)
-    mix=table_style("Observed Rx share by brand",["Brand","Distinct Rx","% of selected scope"],brand_share)
-    per_territory=table_style(f"Top {top_n} prescribers in every territory",
-        ["ASE / MPE","Rank","Prescriber / Code","Specialty","Rx",
-         "Brands observed",comparator+" Rx","APP"],territory_top_rows,
-         6 if brand else None)
-    zero=table_style(f"Prescribers without observed {brand} Rx",["ASE / MPE","Prescriber","Specialty","Selected-scope Rx","Brands observed"],non_rows) if brand else ""
-    territories_section=table_style("Territory-by-territory review",["ASE / MPE","Rx","Prescribers",comparator+" Rx","APP","Leading observed prescribers"],territory_rows,3 if brand else None)
-    # Reference-inspired, fixed-width Outlook-safe email layout.
-    # Render all dynamic text escaped; no browser-only flex/grid CSS.
-    compact_top=[[r[0],str(r[1])+" / "+str(r[2]),r[3],
-                  str(r[4])+" Rx; "+str(r[5])] for r in main_rows]
-    compact_opportunities=[[r[0],r[1],r[4],r[3]] for r in non_rows[:20]]
-    compact_territories=[[r[0],r[1],
-          (str(r[3])+" / "+str(r[4]) if brand else "N/A"),
-          r[5]] for r in territory_rows]
-    if shares:
-        all_region_rx=db.execute(
-            "SELECT count(DISTINCT rx_key) FROM rx_items WHERE division=? AND region=?",
-            [division,region]).fetchone()[0]
-        generic_scope_share=pct(shares["total_rx"],all_region_rx)
-        kpi_items=[
-            (generic_scope_share,"Generic Rx share"),
-            (pct(shares["brand_rx"],shares["total_rx"]), (brand or "Selected brand")+" Rx share"),
-            (pct(shares["competitor_rx"],shares["total_rx"]),"Competitor Rx share"),
-            (num(total),"Generic Rx"),
-        ]
-        summary_note=(
-            "Company classification uses the imported manufacturer field. "
-            +str(shares["unclassified_rx"])+" Rx have unclassified manufacturer records; "
-            +str(shares["overlap_rx"])+" Rx contain both Beximco and competitor brands.")
     else:
-        kpi_items=[("N/A","Generic Rx share"),("N/A","Selected brand Rx share"),
+        doctor_rows = db.execute(
+            """WITH grouped AS (
+                SELECT region,ase,territory,dr_code,max(dr_name) dr_name,
+                  max(specialty) specialty,count(DISTINCT rx_key) rx
+                FROM rx_items WHERE """ + where + """
+                GROUP BY 1,2,3,4
+             ), numbered AS (
+                SELECT *,row_number() OVER (
+                  PARTITION BY region,ase,territory
+                  ORDER BY rx DESC,dr_code) place
+                FROM grouped
+             )
+             SELECT region,ase,territory,place,dr_code,dr_name,specialty,
+                    rx,0,0,NULL,NULL,NULL
+             FROM numbered WHERE place<=?
+             ORDER BY region,ase,territory,place""",
+            params + [n]
+        ).fetchall()
+
+    # Business card: all territories receive their own Top N, never only
+    # the regional top N. A compact regional preview is supplementary.
+    territory_top = []
+    for r in ranked:
+        rse,ase,territory,rank,code,name,specialty,generic_rx,brand_rx,competitor_rx,*_ = r
+        territory_top.append([
+            f"{ase or '—'} / {territory or '—'}", str(rank),
+            f"{name or 'Unnamed'} ({code}) · {specialty or '—'}",
+            f"{num(generic_rx)} generic Rx / {num(brand_rx)} {brand or 'target'} Rx"
+            if brand else f"{num(generic_rx)} observed Rx"
+        ])
+    regional_preview = sorted(
+        ranked, key=lambda r: (-int(r[7]), -int(r[8]), str(r[4]))
+    )[:n]
+    top_rows = [
+        [str(i), f"{r[5]} ({r[4]}) · {r[6]}",
+         f"{r[1]} / {r[2]}",
+         f"{num(r[7])} generic Rx · {num(r[8])} {brand} Rx"
+         if brand else f"{num(r[7])} observed Rx"]
+        for i,r in enumerate(regional_preview,1)
+    ]
+
+    # Aggregate territory totals independently of Top N selection.
+    totals = db.execute(
+        "SELECT ase,territory,count(DISTINCT rx_key) FROM rx_items WHERE "
+        + where + " GROUP BY ase,territory ORDER BY ase,territory", params
+    ).fetchall()
+    targets = {}
+    if brand:
+        targets = {
+            (a,t): int(c) for a,t,c in db.execute(
+                "SELECT ase,territory,count(DISTINCT rx_key) "
+                "FROM rx_items WHERE " + where
+                + " AND brand=? GROUP BY ase,territory", params+[brand]
+            ).fetchall()
+        }
+    # Show territory-specific leaders, never pretend region leaders
+    # are the territory-specific top doctors.
+    leader_names = defaultdict(list)
+    for r in ranked:
+        if len(leader_names[(r[1],r[2])]) < min(n,3):
+            leader_names[(r[1],r[2])].append(str(r[5]))
+    territory_rows = [
+        [f"{a or '—'} / {t or '—'}",num(c),
+         f"{num(targets.get((a,t),0))} / {pct(targets.get((a,t),0),c)}"
+          if brand else "Not selected",
+         "; ".join(leader_names.get((a,t),[])) or "—"]
+        for a,t,c in totals
+    ]
+
+    # Manufacturer-specific competitor ranking is ALWAYS regional, and
+    # does not inherit ASE or MPE filters from the desktop view.
+    competitor_rows = []
+    if generic:
+        entries = db.execute(
+            """SELECT brand,company,count(DISTINCT rx_key) AS cnt
+               FROM rx_items WHERE """ + where + """
+               AND trim(coalesce(brand,''))<>''
+               AND trim(coalesce(company,''))<>''
+               AND regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
+               GROUP BY brand,company ORDER BY cnt DESC,brand,company""",
+            params
+        ).fetchall()
+        competitor_rows = [
+            [b,c,num(count),pct(count,total)]
+            for b,c,count in entries
+        ]
+
+    # Distinguish no target-brand Rx from confirmed competitor Rx.
+    # Both criteria must be true for a competitor opportunity.
+    opportunity_rows = []
+    opportunity_count = 0
+    if brand and generic:
+        doctors = db.execute(
+            """WITH scoped AS (
+                SELECT ase,territory,dr_code,max(dr_name) AS dr_name,
+                  count(DISTINCT rx_key) AS total_rx,
+                  count(DISTINCT CASE WHEN brand=? THEN rx_key END) AS target_rx,
+                  count(DISTINCT CASE WHEN trim(coalesce(company,''))<>'' AND
+                    regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
+                    THEN rx_key END) AS competitor_rx
+                FROM rx_items WHERE """ + where + """
+                GROUP BY ase,territory,dr_code
+             )
+             SELECT ase,territory,dr_code,dr_name,total_rx,competitor_rx
+             FROM scoped WHERE target_rx=0 AND competitor_rx>0
+             ORDER BY competitor_rx DESC,total_rx DESC,dr_code""",
+            [brand]+params
+        ).fetchall()
+        opportunity_count = len(doctors)
+        for a,t,code,name,rx,comp in doctors[:20]:
+            comp_brand_rows = db.execute(
+                """SELECT brand,count(DISTINCT rx_key) cnt FROM rx_items
+                   WHERE """+where+"""
+                   AND ase=? AND territory=? AND dr_code=?
+                   AND trim(coalesce(company,''))<>''
+                   AND regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
+                   GROUP BY brand ORDER BY cnt DESC,brand LIMIT 4""",
+                params+[a,t,code]
+            ).fetchall()
+            detail = ", ".join(f"{b} {c}" for b,c in comp_brand_rows)
+            opportunity_rows.append([
+                f"{a or '—'} / {t or '—'}",str(name or code),
+                detail or "Competitor manufacturer recorded",num(comp)
+            ])
+
+    shares = generic_rx_shares(
+        db, division, generic, region=region, brand=brand
+    ) if generic else None
+    scope = f"{generic or 'All generics'} / {brand or 'All brands'}"
+    if shares:
+        all_rx=int(db.execute(
+            "SELECT count(DISTINCT rx_key) FROM rx_items "
+            "WHERE division=? AND region=?",
+            [division,region]
+        ).fetchone()[0])
+        kpi_items=[
+            (pct(total,all_rx),"Generic Rx share"),
+            (pct(selected_rx,total),f"{brand or 'Target'} Rx share"),
+            (pct(shares["competitor_rx"],total),"Competitor Rx share"),
+            (num(total),"Generic Rx (denominator)")
+        ]
+        classification_note=(
+            f"Company Name verified by imported data: "
+            f"{shares['unclassified_rx']} Rx with missing company and "
+            f"{shares['overlap_rx']} Rx containing both Beximco and competitor manufacturers. "
+            f"Generic share denominator: {num(all_rx)} all-product Rx; "
+            f"brand and competitor share denominator: {num(total)} generic Rx."
+        )
+    else:
+        kpi_items=[("N/A","Generic Rx share"),("N/A","Target Rx share"),
                    ("N/A","Competitor Rx share"),(num(total),"Observed Rx")]
-        summary_note="Select a single generic to calculate comparable manufacturer shares."
+        classification_note="Select a specific generic for comparable Rx-share percentages."
+
+    action_lines=[
+        f"Review the {num(total)} observed generic Rx across {territory_count} territories with the respective ASEs.",
+        f"Use the Top {n} list within each territory; rankings reset for each MPE.",
+    ]
+    if brand and generic:
+        action_lines.append(
+            f"{opportunity_count} doctors show competitor Rx but no observed "
+            f"{brand} Rx; {min(20,opportunity_count)} are detailed below."
+        )
+    opportunity_note=(
+        f"{opportunity_count} confirmed competitor-prescribing doctors have no "
+        f"recorded {brand} Rx. Showing {min(20,opportunity_count)} of "
+        f"{opportunity_count}; not all missing-brand doctors are classified as competitors."
+    ) if brand and generic else ""
+
     method_note=(
-        "All results reflect the imported Rx sample. Apparent Prescription Preference is a "
-        "descriptive selected-brand/selected-generic Rx percentage, not proven doctor preference. "
-        "Brand and manufacturer presence may overlap on the same Rx; the shares need not add to 100%. "
-        "Prescription identifier and company classification should be validated before distribution.")
-    body=render_report(
-        division=division,period=report_date_range(db),region=region,
+        "Apparent Prescription Preference is an observed prescription-presence measure, "
+        "not a physician's stated preference. Brand and company shares may overlap on "
+        "prescriptions with multiple products. All percentages describe only the "
+        "imported sample, not national market share."
+    )
+    period=report_date_range(db).replace(" 00:00:00","")
+    intro=(
+        f"This {period} report contains {num(total)} observed prescriptions "
+        f"for {generic or 'all generics'} from {num(prescriber_count)} distinct "
+        f"doctor codes across {num(territory_count)} territories in {region}. "
+        f"The selected brand {brand} appears in {num(selected_rx)} prescriptions "
+        f"({pct(selected_rx,total)} of the selected scope)."
+        if brand else
+        f"This {period} report contains {num(total)} observed prescriptions "
+        f"from {num(prescriber_count)} prescribers in {num(territory_count)} territories."
+    )
+    html=render_report(
+        division=division,period=period,region=region,
         generic=generic or "All generics",scope=scope,
         recipient=recipient_name or "Regional Sales Executive",
-        intro=introductory,kpi_items=kpi_items,summary_note=summary_note,
-        action_lines=actions,top_rows=compact_top,
-        brand_rows=brand_share,opportunity_rows=compact_opportunities,
-        territory_rows=compact_territories,method_note=method_note)
-    text=(f"Prescription review for {division} {region}\n"
-          f"Scope: {scope}\nObserved Rx: {total}\nPrescribers: {prescribers}\n"
-          +(f"Target brand: {brand}, Rx: {target_rx}, share: {pct(target_rx,total)}\n" if brand else "")
-          +"Open with an HTML-capable email client to see the full formatted report.")
-    return {"html":body,"text":text,"manufacturer_shares":shares,"rx":total,"prescribers":prescribers,
-            "target_rx":target_rx,"scope":scope,"territories":territories}
+        intro=intro,kpi_items=kpi_items,summary_note=classification_note,
+        action_lines=action_lines,top_rows=top_rows,
+        territory_top_rows=territory_top,brand_rows=[
+            [b,num(c),pct(c,total)] for b,c in brand_counts[:12]
+        ],competitor_rows=competitor_rows,
+        opportunity_rows=opportunity_rows,territory_rows=territory_rows,
+        method_note=method_note,top_n=n,opportunity_note=opportunity_note
+    )
+    text=(
+        f"Regional Rx review: {region}\nPeriod: {period}\nScope: {scope}\n"
+        f"Generic Rx: {num(total)}\nSelected brand Rx: {num(selected_rx)}\n"
+        f"Top {n} prescribers per territory are provided in the HTML version.\n"
+        f"Competitor opportunities: {opportunity_count}, "
+        f"showing {min(20,opportunity_count)}.\n"
+        "Draft for review only. No emails have been sent.\n"
+    )
+    return {"html":html,"text":text,"manufacturer_shares":shares,
+            "rx":total,"prescribers":prescriber_count,"target_rx":selected_rx,
+            "scope":scope,"territories":territory_count,"top_n":n,
+            "opportunities_total":opportunity_count,
+            "opportunities_shown":len(opportunity_rows),
+            "territory_top_rows":len(territory_top)}
