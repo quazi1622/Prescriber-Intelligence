@@ -80,6 +80,38 @@ class ProductReportTests(unittest.TestCase):
             self.db,"ACD","Azithromycin",region="T1")
         self.assertEqual(unknown["unclassified_rx"],1)
 
+    def test_three_share_metrics_and_regional_competitor_sort(self):
+        # Doctor D1: 3/3 observed prescriptions are azithromycin;
+        # Azithrocin presence 1/3, competitor presence 2/3.
+        rows=product_analysis.prescriber_share_rankings(
+            self.db,"ACD",10,region="T1",generic="Azithromycin",brand="Azithrocin")
+        self.assertEqual([r[4] for r in rows],["D1","D2"])
+        self.assertEqual(rows[0][7:10],(3,1,2))
+        self.assertEqual(rows[0][10:13],(100.0,33.3,66.7))
+        self.assertEqual(rows[1][7:10],(2,0,2))
+        self.assertEqual(rows[1][10:13],(100.0,0.0,100.0))
+        summary=product_analysis.generic_scope_summary(
+            self.db,"ACD","Azithromycin","T1",brand="Azithrocin")
+        self.assertEqual(summary["generic_share"],100.0)
+        self.assertEqual(summary["brand_share"],20.0)
+        self.assertEqual(summary["competitor_share"],80.0)
+        regional=product_analysis.regional_competitor_shares(
+            self.db,"ACD","Azithromycin",region="T1")
+        self.assertEqual(regional,[("T1","Az",4,5,80.0)])
+
+    def test_regional_competitors_do_not_inherit_territory_filter(self):
+        self.db.execute("""INSERT INTO rx_items VALUES
+           ('ACD','T1','T20','T21','D3','Dr Gamma','GP',
+           'Zimax','Azithromycin','6','Square')""")
+        regional=product_analysis.regional_competitor_shares(
+            self.db,"ACD","Azithromycin",region="T1")
+        self.assertEqual(regional[0],("T1","Az",4,6,66.7))
+        self.assertEqual(regional[1],("T1","Zimax",1,6,16.7))
+        local=product_analysis.prescriber_share_rankings(
+            self.db,"ACD",10,region="T1",ase="T10",territory="T11",
+            generic="Azithromycin",brand="Azithrocin")
+        self.assertEqual(len(local),2)
+
     def test_formatted_html_email_without_csv_attachment(self):
         report=html_report.build_region_report(
             self.db,"ACD","T1",top_n=5,brand="Azithrocin",
