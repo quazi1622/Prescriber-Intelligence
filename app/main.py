@@ -214,7 +214,9 @@ class Window(QMainWindow):
         value=c.committed_text() if isinstance(c,SearchableCombo) else c.currentText()
         return "" if value in ("All","") else value
     def fill(self,c,values):
-        c.blockSignals(True);old=c.currentText();c.clear();c.addItem("All");c.addItems(values)
+        c.blockSignals(True)
+        old=c.committed_text() if isinstance(c,SearchableCombo) else c.currentText()
+        c.clear();c.addItem("All");c.addItems(values)
         if old in values:c.setCurrentText(old)
         if isinstance(c,SearchableCombo):c.commit_programmatic_selection()
         c.blockSignals(False)
