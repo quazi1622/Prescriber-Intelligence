@@ -188,17 +188,24 @@ def build_region_report(db, division, region, top_n=10, brand="", generic="",
             [brand]+params
         ).fetchall()
         opportunity_count = len(doctors)
-        for a,t,code,name,rx,comp in doctors[:20]:
-            comp_brand_rows = db.execute(
-                """SELECT brand,count(DISTINCT rx_key) cnt FROM rx_items
+        selected_doctors=doctors[:20]
+        wanted={(a,t,code) for a,t,code,*_ in selected_doctors}
+        brand_details=defaultdict(list)
+        if wanted:
+            detail_rows=db.execute(
+                """SELECT ase,territory,dr_code,brand,
+                   count(DISTINCT rx_key) cnt FROM rx_items
                    WHERE """+where+"""
-                   AND ase=? AND territory=? AND dr_code=?
                    AND trim(coalesce(company,''))<>''
                    AND regexp_replace(lower(company),'[^a-z0-9]','','g') NOT LIKE 'beximco%'
-                   GROUP BY brand ORDER BY cnt DESC,brand LIMIT 4""",
-                params+[a,t,code]
+                   GROUP BY ase,territory,dr_code,brand
+                   ORDER BY cnt DESC,brand""",params
             ).fetchall()
-            detail = ", ".join(f"{b} {c}" for b,c in comp_brand_rows)
+            for a,t,code,b,cnt in detail_rows:
+                if (a,t,code) in wanted and len(brand_details[(a,t,code)])<4:
+                    brand_details[(a,t,code)].append(f"{b} {cnt}")
+        for a,t,code,name,rx,comp in selected_doctors:
+            detail=", ".join(brand_details[(a,t,code)])
             opportunity_rows.append([
                 f"{a or '—'} / {t or '—'}",str(name or code),
                 detail or "Competitor manufacturer recorded",num(comp)
