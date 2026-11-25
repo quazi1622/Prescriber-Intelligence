@@ -151,9 +151,14 @@ class Window(QMainWindow):
         except Exception as e:self.error(str(e))
     def update_brand(self,*args):
         try:
-            self.fill(self.brand,product_choices(self.db,self.division.currentText(),
+            brands=product_choices(self.db,self.division.currentText(),
                 "brand",self.selected(self.region),self.selected(self.ase),self.selected(self.territory),
-                generic=self.selected(self.generic)))
+                generic=self.selected(self.generic))
+            self.fill(self.brand,brands)
+            if (self.selected(self.generic).casefold()=="azithromycin"
+                    and not self.selected(self.brand)):
+                match=next((b for b in brands if b.casefold()=="azithrocin"),None)
+                if match:self.brand.setCurrentText(match)
             self.refresh()
         except Exception as e:self.error(str(e))
     def refresh(self,*args):
