@@ -2,7 +2,7 @@
 import sys,threading,traceback
 from pathlib import Path
 from PySide6.QtCore import Qt, QObject, Signal
-from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView,QCompleter)
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView,QCompleter,QLineEdit)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 from routing import import_hierarchy
 from product_analysis import product_choices,filtered_rankings,has_product_index,generic_rx_shares,competitor_brand_shares,prescriber_share_rankings,generic_scope_summary,regional_competitor_shares
@@ -180,7 +180,27 @@ class Window(QMainWindow):
         hierarchy=QPushButton("IMPORT ACD RSE–ZSI HIERARCHY EXCEL")
         hierarchy.clicked.connect(self.pick_hierarchy)
         m.addWidget(hierarchy)
-        draft=QPushButton("GENERATE ACD .EML DRAFTS");draft.setObjectName("red");draft.clicked.connect(self.drafts);m.addWidget(draft)
+        mail_settings=QHBoxLayout()
+        top_settings=QVBoxLayout()
+        top_settings.addWidget(QLabel("TOP N PRESCRIBERS PER MPE IN EMAIL"))
+        self.mail_top=QSpinBox()
+        self.mail_top.setRange(1,20)
+        self.mail_top.setValue(10)
+        self.mail_top.setToolTip("Independent of the Analytics Top N setting")
+        top_settings.addWidget(self.mail_top)
+        mail_settings.addLayout(top_settings)
+        sender_settings=QVBoxLayout()
+        sender_settings.addWidget(QLabel("DRAFT SENDER EMAIL (OPTIONAL)"))
+        self.mail_sender=QLineEdit()
+        self.mail_sender.setPlaceholderText("Your authorized sender address")
+        self.mail_sender.setToolTip("Sets From on local drafts only. Nothing is sent.")
+        sender_settings.addWidget(self.mail_sender)
+        mail_settings.addLayout(sender_settings)
+        m.addLayout(mail_settings)
+        draft=QPushButton("GENERATE ACD .EML DRAFTS")
+        draft.setObjectName("red")
+        draft.clicked.connect(self.drafts)
+        m.addWidget(draft)
         self.recipients=QTableWidget();self.recipients.setColumnCount(5)
         self.recipients.setHorizontalHeaderLabels(["Region","RSE","Email","ASE CC Count","ZSI Email"])
         self.recipients.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);m.addWidget(self.recipients)
@@ -354,8 +374,9 @@ class Window(QMainWindow):
         if not path:return
         try:
             manifest=generate_drafts(self.db,Path(path)/"ACD_drafts",
-                self.top.value(),brand=self.selected(self.brand),
-                generic=self.selected(self.generic),division="ACD")
+                self.mail_top.value(),brand=self.selected(self.brand),
+                generic=self.selected(self.generic),division="ACD",
+                sender=self.mail_sender.text().strip())
             blocked=sum(x[1]=="BLOCKED" for x in manifest)
             QMessageBox.information(self,"Drafts created",f"{len(manifest)} drafts; {blocked} blocked for recipient/data issues.\nNo emails sent.")
         except Exception as e:self.error(str(e))
