@@ -78,3 +78,25 @@ Each regional email includes the **regional competitor-wise brand and manufactur
 The 640 px desktop design keeps Outlook's Word-rendered table fallback with Tahoma and inline CSS. Email clients that support mobile media queries render a fluid-width report, 2-column KPI tiles and vertically stacked, labeled data rows on narrow screens. **Classic desktop Outlook does not support every responsive CSS feature**, and actual rendering still requires testing in classic Outlook, new Outlook, and Outlook Mobile.
 
 The generator writes local, unsent HTML + text `.eml` files, **no CSV attachment**. Emails include draft metadata (`X-Unsent`, `Date`, and `Message-ID`). A **Sender Email (optional)** control sets `From` only to an address supplied by the operator; the app does not invent or spoof an address. Addresses and personal reports remain local. Regenerate drafts after installing a successful new Windows build to see the changes.
+
+## Remote device authorization and non-admin installation
+
+New production builds check a Cloudflare Worker before opening and once every 60 seconds. An online device marked blocked, or a device affected by global shutdown, cannot launch or continue running after its next successful check. An approved device continues working during an outage, even if remote revocation is pending; it locks after reconnecting. A device never approved online cannot launch offline. No software can guarantee remote shutdown while a machine has no internet connection.
+
+The app transmits only a random device registration ID, hash of the Windows MachineGuid when available, Windows username, hostname, and app version. Prescription data remains local. Notify employees/users before deploying this tracking and protect the device register. Username is metadata rather than strong identity verification.
+
+A Windows build ZIP contains Install-for-current-user.cmd. Run this from the extracted package: it copies the app to the current user's LocalAppData/Programs/PrescriberIntelligence and creates a Start Menu shortcut without UAC elevation. The local database lives under LocalAppData/PrescriberIntelligence/data; a legacy adjacent data/prescriber.duckdb file is copied once if no per-user database exists.
+
+### Cloudflare deployment (required)
+
+1. On an administrator development machine, use Wrangler to create a D1 database named prescriber-license: npx wrangler d1 create prescriber-license. Paste its ID into cloudflare/wrangler.toml, replacing the placeholder.
+2. In the cloudflare directory run npx wrangler d1 migrations apply prescriber-license --remote.
+3. Run python cloudflare/generate_keys.py to print the Ed25519 private signing key (PKCS8 base64) and the public verification key (raw 32-byte base64). Keep the private key secret and OFF GitHub.
+4. In the cloudflare directory run npx wrangler secret put SIGNING_KEY_PKCS8_B64, then npx wrangler secret put ADMIN_TOKEN (choose a cryptographically random, long token). Deploy using npx wrangler deploy.
+5. In GitHub Actions repository secrets define PI_WORKER_URL as the public HTTPS Worker URL and PI_PUBLIC_KEY_B64 as the public verification key. Re-run GitHub Actions. The licensing-enabled package intentionally fails its build if those values are absent.
+6. Launch on the target PC while connected. The PC registers as pending. On a trusted admin machine set PI_WORKER_URL and PI_ADMIN_TOKEN in its environment; use python cloudflare/admin.py list and python cloudflare/admin.py approve DEVICE_ID. Start the software again.
+7. Use python cloudflare/admin.py block DEVICE_ID to disable one computer, python cloudflare/admin.py shutdown to disable all connected clients, or python cloudflare/admin.py restore to re-enable the global gate. Individually blocked machines remain blocked until separately approved.
+
+Server-only secrets are never embedded in the executable. Signed offline approvals are checked against the public key and a revision counter. The program does not send the Rx dataset to Cloudflare. This is best-effort access control, not tamper-proof DRM against someone capable of modifying the local executable or suppressing network traffic.
+
+Offline-approved machines have no expiration by design, so you cannot guarantee immediate revocation until they reconnect.
