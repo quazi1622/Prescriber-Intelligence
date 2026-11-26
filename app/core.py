@@ -1,5 +1,5 @@
 """Local DuckDB analytics. Confidential inputs are never sent to GitHub."""
-import csv, io, re, sys, shutil, uuid
+import csv, io, re, sys, shutil, uuid, os
 from pathlib import Path
 from email.message import EmailMessage
 from email import policy
@@ -14,8 +14,12 @@ except ImportError:
     from html_report import build_region_report
 
 ROOT=Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parents[1]
-DATA=ROOT/"data"
-DATA.mkdir(exist_ok=True)
+# Per-user data directory: reliable without administrator permissions even when
+# the executable lives in Program Files or a protected extracted folder.
+USER_DATA=Path(os.environ.get("LOCALAPPDATA") or (Path.home()/".local"/"share"))/"PrescriberIntelligence"/"data"
+LEGACY_DATA=ROOT/"data"
+DATA=USER_DATA
+DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/"prescriber.duckdb"
 FIELDS=["entry_date","rx_date","source_type","rx_serial","dr_code","dr_name","degree","specialty","address","acd_mpe","acd_ase","acd_rse","ccd_mpe","ccd_ase","ccd_rse","dosage","product","strength","brand","product_code","company","bpl_division","therapy","generic"]
 HEADERS=["RSE","ASE","Territory","Rank","Doctor Code","Prescriber","Specialty","Prescriptions","Product Rows","Address"]
