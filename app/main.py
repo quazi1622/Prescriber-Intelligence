@@ -1,10 +1,11 @@
 """Prescriber Intelligence: portable PySide6 desktop dashboard."""
 import sys,threading,traceback
 from pathlib import Path
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import Qt, QObject, Signal, QTimer
 from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QComboBox,QSpinBox,QPushButton,QTableWidget,QTableWidgetItem,QTabWidget,QFileDialog,QMessageBox,QTextEdit,QProgressBar,QHeaderView,QCompleter,QLineEdit)
 from core import connect,import_rx,import_audit,has_rankings,ranking,choices,write_csv,generate_drafts,available_sheets,DB,DATA
 from routing import import_hierarchy
+from device_license import check_access
 from product_analysis import product_choices,filtered_rankings,has_product_index,generic_rx_shares,competitor_brand_shares,prescriber_share_rankings,generic_scope_summary,regional_competitor_shares
 
 CSS="""
@@ -94,6 +95,9 @@ class Signals(QObject):
     error=Signal(str)
     progress=Signal(int)
 
+class LicensingSignals(QObject):
+    checked=Signal(bool,str)
+
 class Window(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -101,6 +105,9 @@ class Window(QMainWindow):
         self.rx_path=None
         self.db=connect(self.memory_gb)
         self.rows=[]
+        self._license_check_running=False
+        self.license_signals=LicensingSignals()
+        self.license_signals.checked.connect(self.on_license_checked)
         self.setWindowTitle("Prescriber Intelligence | Emerald Edition")
         self.resize(1450,860)
         outer=QWidget();self.setCentralWidget(outer);root=QVBoxLayout(outer)
@@ -108,6 +115,11 @@ class Window(QMainWindow):
         title=QLabel("◆  PRESCRIBER INTELLIGENCE");title.setObjectName("title");root.addWidget(title)
         sub=QLabel("TERRITORY ANALYTICS  •  OFFLINE DUCKDB  •  EMERALD EDITION")
         sub.setObjectName("sub");root.addWidget(sub)
+        self.access_label=QLabel(
+            "Device authorization active · Windows username and device details "
+            "are sent to the licensing service. Rx data stays local.")
+        self.access_label.setObjectName("sub")
+        root.addWidget(self.access_label)
         self.tabs=QTabWidget();root.addWidget(self.tabs)
         analytics=QWidget();self.tabs.addTab(analytics,"◈  ANALYTICS")
         a=QVBoxLayout(analytics)
@@ -234,6 +246,31 @@ class Window(QMainWindow):
         self.brand.selectionCommitted.connect(self.refresh)
         self.top.valueChanged.connect(self.refresh)
         self.reset_filters();self.load_audit()
+        self.license_timer=QTimer(self)
+        self.license_timer.setInterval(60000)
+        self.license_timer.timeout.connect(self.check_license_async)
+        self.license_timer.start()
+    def check_license_async(self):
+        if self._license_check_running:
+            return
+        self._license_check_running=True
+        def run():
+            try:
+                allowed,reason=check_access(timeout=5)
+            except Exception:
+                allowed,reason=False,"Authorization failed unexpectedly."
+            self.license_signals.checked.emit(allowed,reason)
+        threading.Thread(target=run,daemon=True).start()
+    def on_license_checked(self,allowed,reason):
+        self._license_check_running=False
+        self.access_label.setText(reason)
+        if not allowed:
+            self.license_timer.stop()
+            self.tabs.setEnabled(False)
+            try:self.db.close()
+            except Exception:pass
+            QMessageBox.warning(self,"Access revoked",reason)
+            self.close()
     def selected(self,c):
         value=c.committed_text() if isinstance(c,SearchableCombo) else c.currentText()
         return "" if value in ("All","") else value
@@ -434,4 +471,13 @@ class Window(QMainWindow):
 
 if __name__=="__main__":
     app=QApplication(sys.argv);app.setStyleSheet(CSS)
-    win=Window();win.show();sys.exit(app.exec())
+    allowed,reason=check_access(timeout=5)
+    if not allowed:
+        QMessageBox.warning(None,"Prescriber Intelligence - Access required",
+            reason+"\n\nThis installation cannot open until it is approved.")
+        sys.exit(2)
+    win=Window()
+    win.access_label.setText(reason+
+        " | Device access is periodically rechecked. No Rx data is transmitted.")
+    win.show()
+    sys.exit(app.exec())
