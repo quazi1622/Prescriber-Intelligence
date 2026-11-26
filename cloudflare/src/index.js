@@ -48,10 +48,14 @@ export default {
         const device=await env.DB.prepare("SELECT status,machine_hash FROM devices WHERE device_id=?")
           .bind(id).first();
         const config=await revision(env);
+        const machineBlocked = device.machine_hash
+          ? await env.DB.prepare("SELECT machine_hash FROM blocked_machines WHERE machine_hash=?")
+              .bind(device.machine_hash).first()
+          : null;
         // Detect copied registration files: a previously bound machine ID must match.
         const mismatch=Boolean(device.machine_hash && data.machine_hash &&
                                device.machine_hash!==data.machine_hash);
-        const status=(!config.enabled || mismatch || device.status==="blocked")
+        const status=(!config.enabled || mismatch || machineBlocked || device.status==="blocked")
           ? "blocked" : device.status==="approved" ? "approved" : "pending";
         const payload={
           device_id:id,status,revision:Number(config.version),
@@ -68,7 +72,11 @@ export default {
           "SELECT device_id,machine_hash,windows_user,hostname,app_version,status,last_seen FROM devices ORDER BY last_seen DESC LIMIT 500"
         ).all();
         const setting=await revision(env);
-        return json({enabled:Boolean(setting.enabled),version:setting.version,devices:devices.results});
+        const blocked=await env.DB.prepare(
+          "SELECT machine_hash,blocked_at FROM blocked_machines ORDER BY blocked_at DESC LIMIT 500"
+        ).all();
+        return json({enabled:Boolean(setting.enabled),version:setting.version,
+                     devices:devices.results,blocked_machines:blocked.results});
       }
       if(req.method==="POST" && u.pathname==="/admin/global") {
         const data=await req.json();
@@ -77,6 +85,20 @@ export default {
           "UPDATE settings SET enabled=?,version=version+1 WHERE id=1"
         ).bind(data.enabled?1:0).run();
         return json({ok:true,setting:await revision(env)});
+      }
+      if(req.method==="POST" && u.pathname==="/admin/machine") {
+        const data=await req.json();
+        if(typeof data.machine_hash!=="string" ||
+           !/^[a-f0-9]{64}$/.test(data.machine_hash) ||
+           typeof data.blocked!=="boolean") return json({error:"Invalid machine ID or blocked flag"},400);
+        if(data.blocked)
+          await env.DB.prepare("INSERT OR IGNORE INTO blocked_machines(machine_hash) VALUES(?)")
+            .bind(data.machine_hash).run();
+        else
+          await env.DB.prepare("DELETE FROM blocked_machines WHERE machine_hash=?")
+            .bind(data.machine_hash).run();
+        await env.DB.prepare("UPDATE settings SET version=version+1 WHERE id=1").run();
+        return json({ok:true,machine_hash:data.machine_hash,blocked:data.blocked});
       }
       if(req.method==="POST" && u.pathname==="/admin/device") {
         const data=await req.json();
