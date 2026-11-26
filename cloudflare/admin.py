@@ -29,17 +29,23 @@ def request(path,body=None):
 
 if __name__=="__main__":
     if len(sys.argv)<2:
-        sys.exit("Commands: list, approve ID, block ID, pending ID, shutdown, restore")
+        sys.exit("Commands: list, approve ID, block ID, pending ID, block-machine HASH, unblock-machine HASH, shutdown, restore")
     cmd=sys.argv[1].lower()
     if cmd=="list":
         result=request("/admin/devices")
         print("Global:", "ENABLED" if result["enabled"] else "SHUT DOWN")
         for d in result["devices"]:
             print(d["device_id"],d["status"],"user=",d["windows_user"],
-                  "computer=",d["hostname"],"last_seen=",d["last_seen"])
+                  "computer=",d["hostname"],"machine_hash=",d["machine_hash"],
+                  "last_seen=",d["last_seen"])
+        print("Machine-wide blocks:",result.get("blocked_machines",[]))
     elif cmd in ("approve","block","pending") and len(sys.argv)==3:
         status={"approve":"approved","block":"blocked","pending":"pending"}[cmd]
         print(request("/admin/device",{"device_id":sys.argv[2],"status":status}))
+    elif cmd in ("block-machine","unblock-machine") and len(sys.argv)==3:
+        print(request("/admin/machine",{
+            "machine_hash":sys.argv[2],
+            "blocked":cmd=="block-machine"}))
     elif cmd in ("shutdown","restore"):
         print(request("/admin/global",{"enabled":cmd=="restore"}))
     else:sys.exit("Invalid command")
