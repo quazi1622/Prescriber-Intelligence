@@ -24,11 +24,21 @@ jobs:
         run: |
           python -m unittest discover -s tests -v 2>&1 | Tee-Object -FilePath test-results.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Embed public licensing configuration
+        env:
+          PI_WORKER_URL: ${{ secrets.PI_WORKER_URL }}
+          PI_PUBLIC_KEY_B64: ${{ secrets.PI_PUBLIC_KEY_B64 }}
+        run: python cloudflare/write_client_config.py
+      - name: Include per-user installation script
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path installers | Out-Null
       - name: Package portable application and capture logs
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean --onedir --windowed --name Prescriber_Intelligence --paths app --collect-all duckdb app/main.py 2>&1 | Tee-Object -FilePath packaging-results.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item installers/install_for_user.cmd dist/Prescriber_Intelligence/Install-for-current-user.cmd
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
