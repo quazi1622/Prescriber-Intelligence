@@ -20,6 +20,10 @@ USER_DATA=Path(os.environ.get("LOCALAPPDATA") or (Path.home()/".local"/"share"))
 LEGACY_DATA=ROOT/"data"
 DATA=USER_DATA
 DATA.mkdir(parents=True,exist_ok=True)
+# One-time non-destructive migration from older portable builds.
+# Never overwrite an existing per-user database.
+if LEGACY_DATA!=DATA and (LEGACY_DATA/"prescriber.duckdb").is_file() and not (DATA/"prescriber.duckdb").exists():
+    shutil.copy2(LEGACY_DATA/"prescriber.duckdb",DATA/"prescriber.duckdb")
 DB=DATA/"prescriber.duckdb"
 FIELDS=["entry_date","rx_date","source_type","rx_serial","dr_code","dr_name","degree","specialty","address","acd_mpe","acd_ase","acd_rse","ccd_mpe","ccd_ase","ccd_rse","dosage","product","strength","brand","product_code","company","bpl_division","therapy","generic"]
 HEADERS=["RSE","ASE","Territory","Rank","Doctor Code","Prescriber","Specialty","Prescriptions","Product Rows","Address"]
