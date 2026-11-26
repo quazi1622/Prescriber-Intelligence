@@ -39,9 +39,13 @@ class DeviceLicenseTests(unittest.TestCase):
         self.patch_url.start()
         self.addCleanup(self.patch_key.stop)
         self.addCleanup(self.patch_url.stop)
+        self.patch_machine=patch.object(license,"machine_id",return_value="machine-1")
+        self.patch_machine.start()
+        self.addCleanup(self.patch_machine.stop)
 
     def signed(self,status,revision,device_id):
         payload={"device_id":device_id,"status":status,"revision":revision,
+                 "machine_hash":"machine-1",
                  "issued_at":"2026-11-26T10:30:00.123Z"}
         encoded=json.dumps(payload,sort_keys=True,separators=(",",":"),
                            ensure_ascii=False).encode("utf-8")
@@ -76,6 +80,16 @@ class DeviceLicenseTests(unittest.TestCase):
         license.write_state(state)
         with patch.object(license.urllib.request,"urlopen",side_effect=URLError("offline")):
             self.assertFalse(license.check_access()[0])
+
+    def test_copied_license_cache_cannot_authorize_other_computer(self):
+        state=license.read_state()
+        license.write_state(state)
+        with patch.object(license.urllib.request,"urlopen",
+                return_value=FakeResponse(self.signed("approved",3,state["device_id"]))):
+            self.assertTrue(license.check_access()[0])
+        with patch.object(license,"machine_id",return_value="different-machine"):
+            with patch.object(license.urllib.request,"urlopen",side_effect=URLError("offline")):
+                self.assertFalse(license.check_access()[0])
 
     def test_old_approval_cannot_overwrite_new_block(self):
         state=license.read_state()
