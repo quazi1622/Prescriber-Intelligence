@@ -15,6 +15,12 @@ jobs:
           python-version: '3.12'
       - name: Install build dependencies
         run: python -m pip install -r requirements.txt
+      - name: Verify installed runtime dependencies
+        shell: pwsh
+        run: |
+          python -m pip check
+          python -c "import cryptography, duckdb, openpyxl, PySide6; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey; print('Runtime dependencies and Ed25519 available; cryptography=' + cryptography.__version__)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate Python syntax
         run: python -m compileall -q app tests cloudflare
       - name: Validate Cloudflare Worker syntax
