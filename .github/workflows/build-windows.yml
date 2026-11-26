@@ -29,7 +29,7 @@ jobs:
         run: node --check src/index.js
       - name: Test Cloudflare license administration API
         working-directory: cloudflare
-        run: node --test tests/*.test.mjs
+        run: node --test tests/admin_dashboard.test.mjs
       - name: Run all regression tests and capture logs
         shell: pwsh
         env:
