@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 import uuid
 from datetime import datetime, timezone
+from cryptography.exceptions import InvalidSignature
 from pathlib import Path
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -95,7 +96,9 @@ def verify_response(response, expected_device):
     if payload["status"] not in ("approved", "pending", "blocked"):
         raise ValueError("Unknown access status.")
     # Strict UTC ISO timestamp, lexicographic comparison is stable here.
-    datetime.strptime(payload["issued_at"], "%Y-%m-%dT%H:%M:%SZ")
+    datetime.fromisoformat(payload["issued_at"].replace("Z","+00:00"))
+    if not isinstance(payload.get("revision"),int) or payload["revision"]<0:
+        raise ValueError("Invalid revision")
     return payload
 
 
@@ -117,20 +120,26 @@ def check_access(timeout=5):
             if response.status != 200:
                 raise ValueError("Unexpected licensing response")
             raw = response.read(16_384)
-        payload = verify_response(json.loads(raw), state["device_id"])
-        if payload["issued_at"] >= state.get("issued_at", ""):
-            state["status"] = payload["status"]
-            state["issued_at"] = payload["issued_at"]
+        signed_response=json.loads(raw)
+        payload=verify_response(signed_response,state["device_id"])
+        if payload["revision"] >= int(state.get("revision",-1)):
+            state["status"]=payload["status"]
+            state["issued_at"]=payload["issued_at"]
+            state["revision"]=payload["revision"]
+            state["signed_decision"]=signed_response
             write_state(state)
-        else:
-            # Ignore replayed older decisions; stored last decision wins.
-            pass
     except (OSError, ValueError, KeyError, TypeError, UnicodeError,
-            urllib.error.URLError) as exc:
-        if state["status"] == "approved":
-            return True, "Offline: previously approved access remains available."
-        return False, ("Unable to verify authorization. Connect once for approval "
-                       "or contact the software administrator.")
+            InvalidSignature, urllib.error.URLError):
+        cached=state.get("signed_decision")
+        if cached:
+            try:
+                previous=verify_response(cached,state["device_id"])
+                if (previous["status"]=="approved"
+                    and previous["revision"]==int(state.get("revision",-1))):
+                    return True,"Offline: signed device approval remains valid."
+            except (InvalidSignature,ValueError,TypeError,KeyError,UnicodeError):
+                pass
+        return False,"Authorization unavailable; reconnect to request approval."
     status = state["status"]
     if status == "approved":
         return True, "Device authorized."
