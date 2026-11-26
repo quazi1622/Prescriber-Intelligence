@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS blocked_machines (
+  machine_hash TEXT PRIMARY KEY,
+  blocked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
