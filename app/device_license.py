@@ -118,7 +118,9 @@ def check_access(timeout=5):
     url = WORKER_URL.rstrip("/") + "/api/check"
     request = urllib.request.Request(
         url, data=json.dumps(identity(state)).encode("utf-8"),
-        headers={"Content-Type": "application/json"}, method="POST")
+        headers={"Content-Type": "application/json",
+                 "User-Agent": "PrescriberIntelligence/1.0 (Windows desktop licensing client)"},
+        method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.status != 200:
