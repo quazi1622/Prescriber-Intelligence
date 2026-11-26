@@ -93,6 +93,10 @@ def verify_response(response, expected_device):
     public_key.verify(signature, canonical)
     if payload["device_id"] != expected_device:
         raise ValueError("Authorization response was issued for a different device.")
+    local_machine = machine_id()
+    signed_machine = payload.get("machine_hash", "")
+    if local_machine and signed_machine != local_machine:
+        raise ValueError("Device authorization belongs to a different computer.")
     if payload["status"] not in ("approved", "pending", "blocked"):
         raise ValueError("Unknown access status.")
     # Strict UTC ISO timestamp, lexicographic comparison is stable here.
