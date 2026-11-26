@@ -55,6 +55,7 @@ export default {
           ? "blocked" : device.status==="approved" ? "approved" : "pending";
         const payload={
           device_id:id,status,revision:Number(config.version),
+          machine_hash:device.machine_hash || "",
           issued_at:new Date().toISOString()
         };
         return json(await signed(env,payload));
