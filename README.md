@@ -100,3 +100,9 @@ A Windows build ZIP contains Install-for-current-user.cmd. Run this from the ext
 Server-only secrets are never embedded in the executable. Signed offline approvals are checked against the public key and a revision counter. The program does not send the Rx dataset to Cloudflare. This is best-effort access control, not tamper-proof DRM against someone capable of modifying the local executable or suppressing network traffic.
 
 Offline-approved machines have no expiration by design, so you cannot guarantee immediate revocation until they reconnect.
+
+### Machine-wide blocking (all Windows user accounts)
+
+Run the second D1 migration as well: in cloudflare, execute npx wrangler d1 migrations apply prescriber-license --remote. The migration creates the blocked_machines table. With the authorized administrator environment variables set, use python cloudflare/admin.py list to obtain machine_hash values. Use python cloudflare/admin.py block-machine MACHINE_HASH to deny that computer for all its current and future local Windows users, or python cloudflare/admin.py unblock-machine MACHINE_HASH to restore machine-level eligibility. Per-installation approval remains required. Device hashes may be empty if Windows MachineGuid cannot be read without elevated permissions; in that case block each installation ID, and note that machine-level blocking is unavailable for that device.
+
+Do not modify or erase local prescription data when blocking access. The application only refuses launch or closes its current session. Blocking does not revoke old unlicensed executable versions already distributed. Replace those binaries through your normal software-distribution process.
